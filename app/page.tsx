@@ -101,9 +101,7 @@ export default async function Home() {
           <h1>
             Mehr als Padel.
             <br />
-            <span className="gradient">
-              Wir sind Community.
-            </span>
+            <span className="gradient">Wir sind Community.</span>
           </h1>
 
           <p className="lead">
@@ -128,7 +126,7 @@ export default async function Home() {
           </div>
         </section>
 
-        {/* VERANSTALTUNGEN MIT BILDERN */}
+        {/* VERANSTALTUNGEN */}
         <section id="training" className="container section">
           <div className="sectionhead">
             <div>
@@ -144,7 +142,7 @@ export default async function Home() {
             </Link>
           </div>
 
-          {events.length ? (
+          {events.length > 0 ? (
             <div className="grid">
               {events.map((e) => (
                 <article className="card" key={e.id}>
@@ -168,15 +166,12 @@ export default async function Home() {
                     {e.category || 'Vereinstermin'}
                   </span>
 
-                  <p className="date">
-                    {dateLabel(e.starts_at)}
-                  </p>
+                  <p className="date">{dateLabel(e.starts_at)}</p>
 
                   <h3>{e.title}</h3>
 
                   <p className="muted">
-                    {e.description ||
-                      'Weitere Informationen folgen.'}
+                    {e.description || 'Weitere Informationen folgen.'}
                   </p>
 
                   {e.location && (
@@ -205,10 +200,7 @@ export default async function Home() {
         </section>
 
         {/* TRAININGSANMELDUNG */}
-        <section
-          id="training-anmeldung"
-          className="container section"
-        >
+        <section id="training-anmeldung" className="container section">
           <div className="sectionhead">
             <div>
               <p className="eyebrow">Gemeinsam am Court</p>
@@ -229,7 +221,7 @@ export default async function Home() {
           <TrainingList />
         </section>
 
-        {/* NEWS MIT BILDERN */}
+        {/* NEWS */}
         <section id="news" className="container section">
           <div className="sectionhead">
             <div>
@@ -238,7 +230,7 @@ export default async function Home() {
             </div>
           </div>
 
-          {news.length ? (
+          {news.length > 0 ? (
             <div className="grid">
               {news.map((n) => (
                 <article className="card" key={n.id}>
@@ -263,8 +255,7 @@ export default async function Home() {
                   <h3>{n.title}</h3>
 
                   <p className="muted">
-                    {n.description ||
-                      'Weitere Informationen folgen.'}
+                    {n.description || 'Weitere Informationen folgen.'}
                   </p>
                 </article>
               ))}
@@ -277,10 +268,18 @@ export default async function Home() {
           )}
         </section>
 
-        {/* VEREIN */}
+        {/* VEREIN UND COMMUNITY */}
         <section id="verein" className="container section">
           <div className="grid">
-            <article className="card">
+            <Link
+              href="/mitglied-werden"
+              className="card"
+              style={{
+                display: 'block',
+                color: 'inherit',
+                textDecoration: 'none',
+              }}
+            >
               <Users color="var(--cyan)" size={28} />
 
               <h3>Verein &amp; Community</h3>
@@ -289,9 +288,21 @@ export default async function Home() {
                 Gemeinsam besser werden, neue Leute kennenlernen und
                 Padel erleben.
               </p>
-            </article>
 
-            <article className="card">
+              <span className="btn">
+                Mitglied werden <ArrowUpRight size={17} />
+              </span>
+            </Link>
+
+            <Link
+              href="#training"
+              className="card"
+              style={{
+                display: 'block',
+                color: 'inherit',
+                textDecoration: 'none',
+              }}
+            >
               <Trophy color="var(--pink)" size={28} />
 
               <h3>Turniere &amp; Meisterschaften</h3>
@@ -300,9 +311,21 @@ export default async function Home() {
                 Spiele mit, sammle Erfahrung und vertrete unseren
                 Verein.
               </p>
-            </article>
 
-            <article className="card">
+              <span className="btn">
+                Termine ansehen <ArrowUpRight size={17} />
+              </span>
+            </Link>
+
+            <Link
+              href="#news"
+              className="card"
+              style={{
+                display: 'block',
+                color: 'inherit',
+                textDecoration: 'none',
+              }}
+            >
               <Images color="#b78aff" size={28} />
 
               <h3>Erinnerungen teilen</h3>
@@ -311,9 +334,21 @@ export default async function Home() {
                 Fotos und Highlights unserer Trainings und Events an
                 einem Ort.
               </p>
-            </article>
 
-            <article className="card">
+              <span className="btn">
+                Fotos &amp; News ansehen <ArrowUpRight size={17} />
+              </span>
+            </Link>
+
+            <Link
+              href="/angebote"
+              className="card"
+              style={{
+                display: 'block',
+                color: 'inherit',
+                textDecoration: 'none',
+              }}
+            >
               <Gift color="var(--cyan)" size={28} />
 
               <h3>Member Benefits</h3>
@@ -323,10 +358,10 @@ export default async function Home() {
                 für unsere Mitglieder.
               </p>
 
-              <Link className="btn" href="/angebote">
+              <span className="btn">
                 Angebote entdecken <ArrowUpRight size={17} />
-              </Link>
-            </article>
+              </span>
+            </Link>
           </div>
 
           <div className="actions">
