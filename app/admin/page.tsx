@@ -40,6 +40,8 @@ type Member = {
   created_at: string;
 };
 
+const STORAGE_BUCKET = 'Padelclubbing';
+
 export default function Admin() {
   const router = useRouter();
 
@@ -194,7 +196,7 @@ export default function Admin() {
         const path = `${Date.now()}-${safeName}`;
 
         const { error: uploadError } = await supabase.storage
-          .from('training-images')
+          .from(STORAGE_BUCKET)
           .upload(path, imageFile, {
             upsert: false,
             contentType: imageFile.type,
@@ -206,7 +208,7 @@ export default function Admin() {
         }
 
         finalImageUrl = supabase.storage
-          .from('training-images')
+          .from(STORAGE_BUCKET)
           .getPublicUrl(path).data.publicUrl;
       }
 
@@ -377,7 +379,9 @@ export default function Admin() {
           <p className="eyebrow">Verwaltung</p>
           <a href="#members">Mitglieder ({pendingMembers.length} offen)</a>
           <a href="#new">+ Neuer Eintrag</a>
-          <a href="#training-management">Trainingsverwaltung &amp; Anmeldungen</a>
+          <a href="#training-management">
+            Trainingsverwaltung &amp; Anmeldungen
+          </a>
           <a href="#events">Bisherige Termine &amp; Turniere</a>
           <a href="#news">News verwalten</a>
           <a href="mailto:thepadelclubbing@gmail.com">Hilfe / Kontakt</a>
@@ -593,7 +597,7 @@ export default function Admin() {
                 <input
                   id="entry-image"
                   type="file"
-                  accept="image/*"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
                   onChange={(e) =>
                     setImageFile(e.target.files?.[0] || null)
                   }
@@ -602,7 +606,7 @@ export default function Admin() {
                   Ein neues Foto ersetzt das bisherige Bild.{' '}
                   {imageUrl && !imageFile
                     ? 'Aktuell ist bereits ein Bild hinterlegt.'
-                    : 'Unterstützt JPG, PNG und WebP.'}
+                    : 'Unterstützt JPG, PNG, WebP und GIF.'}
                 </span>
               </div>
 
