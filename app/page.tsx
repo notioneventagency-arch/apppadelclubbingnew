@@ -1,4 +1,3 @@
-
 import Link from 'next/link';
 import {
   Trophy,
@@ -18,6 +17,8 @@ type Entry = {
   location: string | null;
   category: string | null;
   image_url?: string | null;
+  published?: boolean;
+  created_at?: string;
 };
 
 async function getEntries(table: 'events' | 'news'): Promise<Entry[]> {
@@ -28,7 +29,8 @@ async function getEntries(table: 'events' | 'news'): Promise<Entry[]> {
     .select('*')
     .eq('published', true)
     .order(table === 'events' ? 'starts_at' : 'created_at', {
-      ascending: true,
+      ascending: table === 'events',
+      nullsFirst: false,
     })
     .limit(3);
 
@@ -107,7 +109,7 @@ export default async function Home() {
           </div>
         </section>
 
-        {/* BISHERIGE VEREINSTERMINE UND TURNIERE */}
+        {/* VERANSTALTUNGEN MIT BILDERN */}
         <section id="training" className="container section">
           <div className="sectionhead">
             <div>
@@ -127,6 +129,22 @@ export default async function Home() {
             <div className="grid">
               {events.map((e) => (
                 <article className="card" key={e.id}>
+                  {e.image_url && (
+                    <img
+                      src={e.image_url}
+                      alt={e.title}
+                      loading="lazy"
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        height: 200,
+                        objectFit: 'cover',
+                        borderRadius: 10,
+                        marginBottom: 14,
+                      }}
+                    />
+                  )}
+
                   <span className="tag">
                     {e.category || 'Vereinstermin'}
                   </span>
@@ -164,7 +182,7 @@ export default async function Home() {
           )}
         </section>
 
-        {/* NEU: ANMELDUNG ZU KONKRETEN TRAININGSTERMINEN */}
+        {/* TRAININGSANMELDUNG */}
         <section
           id="training-anmeldung"
           className="container section"
@@ -189,7 +207,7 @@ export default async function Home() {
           <TrainingList />
         </section>
 
-        {/* NEWS */}
+        {/* NEWS MIT BILDERN */}
         <section id="news" className="container section">
           <div className="sectionhead">
             <div>
@@ -205,12 +223,15 @@ export default async function Home() {
                   {n.image_url && (
                     <img
                       src={n.image_url}
-                      alt=""
+                      alt={n.title}
+                      loading="lazy"
                       style={{
+                        display: 'block',
                         width: '100%',
-                        maxHeight: 180,
+                        height: 200,
                         objectFit: 'cover',
                         borderRadius: 10,
+                        marginBottom: 14,
                       }}
                     />
                   )}
@@ -219,7 +240,9 @@ export default async function Home() {
 
                   <h3>{n.title}</h3>
 
-                  <p className="muted">{n.description}</p>
+                  <p className="muted">
+                    {n.description || 'Weitere Informationen folgen.'}
+                  </p>
                 </article>
               ))}
             </div>
