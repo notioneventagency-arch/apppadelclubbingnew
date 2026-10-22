@@ -15,7 +15,7 @@ export default function Login() {
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!supabase) {
+    if (!supabase || !supabaseReady) {
       setMessage(
         'Die Datenbank ist noch nicht verbunden. Bitte überprüfe die Supabase-Einrichtung.'
       );
@@ -27,7 +27,7 @@ export default function Login() {
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
@@ -61,22 +61,22 @@ export default function Login() {
       }
 
       if (profile.status !== 'approved') {
+        await supabase.auth.signOut();
         setMessage(
           'Deine Registrierung ist eingegangen. Dein Zugang wird vom Verein geprüft und freigeschaltet.'
         );
-        await supabase.auth.signOut();
         return;
       }
 
       if (profile.role === 'admin') {
         router.replace('/admin');
       } else if (profile.role === 'member') {
-        router.replace('/angebote');
+        router.replace('/');
       } else {
+        await supabase.auth.signOut();
         setMessage(
           'Dein Konto hat keine gültige Rolle. Bitte kontaktiere den Verein.'
         );
-        await supabase.auth.signOut();
         return;
       }
 
@@ -96,7 +96,7 @@ export default function Login() {
       style={{ maxWidth: 560, paddingTop: 36 }}
     >
       <Link className="brand" href="/">
-        <img src="/padelclubbing-logo.jpg" alt="Logo" />
+        <img src="/padelclubbing-logo.jpg" alt="PADELCLUBBING Logo" />
         <span>PADELCLUBBING</span>
       </Link>
 
@@ -110,9 +110,9 @@ export default function Login() {
         </p>
 
         {!supabaseReady && (
-          <div className="notice">
-            Die App ist noch nicht mit Supabase verbunden. Bitte
-            überprüfe die Einrichtung.
+          <div className="notice" role="alert">
+            Die App ist noch nicht mit Supabase verbunden.
+            Bitte überprüfe die Einrichtung.
           </div>
         )}
 
@@ -147,12 +147,16 @@ export default function Login() {
             />
           </div>
 
-          <button className="btn primary" type="submit" disabled={busy}>
+          <button
+            className="btn primary"
+            type="submit"
+            disabled={busy || !supabaseReady}
+          >
             {busy ? 'Anmeldung …' : 'Anmelden'}
           </button>
 
           {message && (
-            <div className="notice" role="status">
+            <div className="notice" role="status" aria-live="polite">
               {message}
             </div>
           )}
