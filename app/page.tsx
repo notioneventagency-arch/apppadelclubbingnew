@@ -5,6 +5,7 @@ import {
   Users,
   ArrowUpRight,
   Instagram,
+  Gift,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import TrainingList from '@/components/training-list';
@@ -21,7 +22,9 @@ type Entry = {
   created_at?: string;
 };
 
-async function getEntries(table: 'events' | 'news'): Promise<Entry[]> {
+async function getEntries(
+  table: 'events' | 'news'
+): Promise<Entry[]> {
   if (!supabase) return [];
 
   const { data, error } = await supabase
@@ -61,7 +64,10 @@ export default async function Home() {
       <header className="container">
         <nav className="nav">
           <Link className="brand" href="/">
-            <img src="/padelclubbing-logo.jpg" alt="Padelclubbing Logo" />
+            <img
+              src="/padelclubbing-logo.jpg"
+              alt="Padelclubbing Logo"
+            />
             <span>PADELCLUBBING</span>
           </Link>
 
@@ -70,6 +76,12 @@ export default async function Home() {
             <a href="#training-anmeldung">Trainingsanmeldung</a>
             <a href="#news">News</a>
             <a href="#verein">Der Verein</a>
+
+            <Link href="/angebote">
+              <Gift size={16} />
+              Member Benefits
+            </Link>
+
             <Link href="/login">Mitglieder-Login ↗</Link>
           </div>
         </nav>
@@ -89,7 +101,9 @@ export default async function Home() {
           <h1>
             Mehr als Padel.
             <br />
-            <span className="gradient">Wir sind Community.</span>
+            <span className="gradient">
+              Wir sind Community.
+            </span>
           </h1>
 
           <p className="lead">
@@ -105,6 +119,11 @@ export default async function Home() {
 
             <Link className="btn" href="/mitglied-werden">
               Mitglied werden
+            </Link>
+
+            <Link className="btn" href="/angebote">
+              <Gift size={17} />
+              Member Benefits
             </Link>
           </div>
         </section>
@@ -149,12 +168,15 @@ export default async function Home() {
                     {e.category || 'Vereinstermin'}
                   </span>
 
-                  <p className="date">{dateLabel(e.starts_at)}</p>
+                  <p className="date">
+                    {dateLabel(e.starts_at)}
+                  </p>
 
                   <h3>{e.title}</h3>
 
                   <p className="muted">
-                    {e.description || 'Weitere Informationen folgen.'}
+                    {e.description ||
+                      'Weitere Informationen folgen.'}
                   </p>
 
                   {e.location && (
@@ -171,8 +193,8 @@ export default async function Home() {
 
               <p>
                 Trainings, Turniere und Meisterschaften erscheinen
-                automatisch, sobald ein Admin sie im Verwaltungsbereich
-                veröffentlicht.
+                automatisch, sobald ein Admin sie im
+                Verwaltungsbereich veröffentlicht.
               </p>
 
               <Link className="btn" href="/login">
@@ -241,15 +263,16 @@ export default async function Home() {
                   <h3>{n.title}</h3>
 
                   <p className="muted">
-                    {n.description || 'Weitere Informationen folgen.'}
+                    {n.description ||
+                      'Weitere Informationen folgen.'}
                   </p>
                 </article>
               ))}
             </div>
           ) : (
             <div className="empty">
-              Hier findet ihr künftig Neuigkeiten, Rückblicke und Infos
-              aus dem Verein.
+              Hier findet ihr künftig Neuigkeiten, Rückblicke und
+              Infos aus dem Verein.
             </div>
           )}
         </section>
@@ -274,7 +297,8 @@ export default async function Home() {
               <h3>Turniere &amp; Meisterschaften</h3>
 
               <p className="muted">
-                Spiele mit, sammle Erfahrung und vertrete unseren Verein.
+                Spiele mit, sammle Erfahrung und vertrete unseren
+                Verein.
               </p>
             </article>
 
@@ -287,6 +311,21 @@ export default async function Home() {
                 Fotos und Highlights unserer Trainings und Events an
                 einem Ort.
               </p>
+            </article>
+
+            <article className="card">
+              <Gift color="var(--cyan)" size={28} />
+
+              <h3>Member Benefits</h3>
+
+              <p className="muted">
+                Exklusive Angebote, Sponsorvorteile und Rabattcodes
+                für unsere Mitglieder.
+              </p>
+
+              <Link className="btn" href="/angebote">
+                Angebote entdecken <ArrowUpRight size={17} />
+              </Link>
             </article>
           </div>
 
