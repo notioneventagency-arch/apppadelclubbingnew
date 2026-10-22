@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase, supabaseReady } from '@/lib/supabase';
+import TrainingManagement from '@/components/training-management';
 import {
   Plus,
   LogOut,
