@@ -56,6 +56,12 @@ export default function Home() {
   const [news, setNews] = useState<Entry[]>([]);
   const [loggingOut, setLoggingOut] = useState(false);
 
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginMessage, setLoginMessage] = useState('');
+  const [loginBusy, setLoginBusy] = useState(false);
+
   const loadUser = useCallback(async (userId: string | null) => {
     setProfileError(false);
     setEvents([]);
@@ -76,7 +82,10 @@ export default function Home() {
       .maybeSingle();
 
     if (profileQueryError) {
-      console.error('Profil konnte nicht geladen werden:', profileQueryError.message);
+      console.error(
+        'Profil konnte nicht geladen werden:',
+        profileQueryError.message,
+      );
       setProfileError(true);
       setLoading(false);
       return;
@@ -117,13 +126,19 @@ export default function Home() {
     ]);
 
     if (eventsResult.error) {
-      console.error('Events konnten nicht geladen werden:', eventsResult.error.message);
+      console.error(
+        'Events konnten nicht geladen werden:',
+        eventsResult.error.message,
+      );
     } else {
       setEvents((eventsResult.data || []) as Entry[]);
     }
 
     if (newsResult.error) {
-      console.error('News konnten nicht geladen werden:', newsResult.error.message);
+      console.error(
+        'News konnten nicht geladen werden:',
+        newsResult.error.message,
+      );
     } else {
       setNews((newsResult.data || []) as Entry[]);
     }
@@ -158,8 +173,6 @@ export default function Home() {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
 
-      // Supabase empfiehlt, im Auth-Callback keine weiteren
-      // Supabase-Abfragen direkt auszuführen.
       const userId = session?.user?.id ?? null;
       setLoading(true);
 
@@ -174,6 +187,73 @@ export default function Home() {
     };
   }, [loadUser]);
 
+  async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    if (!supabase || !supabaseReady) {
+      setLoginMessage(
+        'Die Verbindung zum Mitgliederportal ist momentan nicht verfügbar.',
+      );
+      return;
+    }
+
+    setLoginBusy(true);
+    setLoginMessage('');
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginEmail.trim(),
+        password: loginPassword,
+      });
+
+      if (error || !data.user) {
+        setLoginMessage(
+          'Anmeldung nicht möglich. Bitte überprüfe deine E-Mail-Adresse und dein Passwort.',
+        );
+        return;
+      }
+
+      setLoading(true);
+
+      const { data: profile, error: profileQueryError } = await supabase
+        .from('profiles')
+        .select('role,status')
+        .eq('id', data.user.id)
+        .maybeSingle();
+
+      if (profileQueryError) {
+        setLoginMessage(
+          'Du bist angemeldet, aber dein Mitgliederstatus konnte nicht geprüft werden. Bitte versuche es erneut.',
+        );
+        return;
+      }
+
+      const memberProfile = profile as Profile | null;
+
+      if (
+        !memberProfile ||
+        memberProfile.status !== 'approved' ||
+        !['member', 'admin'].includes(memberProfile.role)
+      ) {
+        setLoginMessage(
+          'Dein Konto ist noch nicht freigeschaltet. Der Verein muss deine Registrierung zuerst prüfen.',
+        );
+        await loadUser(data.user.id);
+        setLoginPassword('');
+        return;
+      }
+
+      setLoginPassword('');
+      await loadUser(data.user.id);
+    } catch {
+      setLoginMessage(
+        'Die Anmeldung ist fehlgeschlagen. Bitte versuche es später erneut.',
+      );
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
   async function handleLogout() {
     if (!supabase) return;
 
@@ -187,60 +267,14 @@ export default function Home() {
       return;
     }
 
+    setLoginMessage('');
+    setLoginPassword('');
+    setAuthMode('login');
+    setLoading(true);
+
     router.replace('/');
     router.refresh();
   }
-
-  const memberArea = (
-    <section className="container section">
-      <div className="card">
-        <Users size={30} color="var(--cyan)" />
-        <h2>Dein Mitgliederbereich</h2>
-
-        {profileError ? (
-          <>
-            <p className="muted">
-              Dein Mitgliederstatus konnte nicht geladen werden.
-              Bitte versuche es erneut.
-            </p>
-            <button
-              className="btn"
-              onClick={() => window.location.reload()}
-            >
-              Erneut versuchen
-            </button>
-          </>
-        ) : signedIn ? (
-          <>
-            <p className="muted">
-              Dein Konto ist noch nicht für den Mitgliederbereich
-              freigeschaltet. Nach der Prüfung durch den Verein
-              erhältst du Zugriff auf Termine, Trainings und News.
-            </p>
-            <button className="btn" onClick={handleLogout}>
-              Abmelden
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="muted">
-              Melde dich mit deinem freigeschalteten Mitgliedskonto an,
-              um Vereinstermine, Trainings, News und Mitgliederangebote
-              zu sehen.
-            </p>
-            <div className="actions">
-              <Link className="btn primary" href="/login">
-                Jetzt anmelden
-              </Link>
-              <Link className="btn" href="/mitglied-werden">
-                Mitglied werden
-              </Link>
-            </div>
-          </>
-        )}
-      </div>
-    </section>
-  );
 
   return (
     <>
@@ -277,10 +311,7 @@ export default function Home() {
                 </button>
               </>
             ) : (
-              <>
-                <Link href="/login">Mitglieder-Login</Link>
-                <Link href="/mitglied-werden">Mitglied werden</Link>
-              </>
+              <a href="#mitgliederzugang">Mitgliederzugang</a>
             )}
           </div>
         </nav>
@@ -322,32 +353,19 @@ export default function Home() {
               : 'Gemeinsam trainieren, stärker werden, Turniere spielen und besondere Momente erleben. Willkommen bei Padelclubbing – deinem Padelverein.'}
           </p>
 
-          <div className="actions">
-            {loading ? (
-              <span className="muted">Prüfe deinen Zugang …</span>
-            ) : isApprovedMember ? (
-              <>
-                <a className="btn primary" href="#training">
-                  Termine entdecken <ArrowUpRight size={17} />
-                </a>
-                <a className="btn" href="#training-anmeldung">
-                  Trainingsanmeldung
-                </a>
-                <Link className="btn" href="/angebote">
-                  <Gift size={17} /> Member Benefits
-                </Link>
-              </>
-            ) : (
-              <>
-                <Link className="btn primary" href="/login">
-                  Mitglieder-Login <ArrowUpRight size={17} />
-                </Link>
-                <Link className="btn" href="/mitglied-werden">
-                  Mitglied werden
-                </Link>
-              </>
-            )}
-          </div>
+          {isApprovedMember && (
+            <div className="actions">
+              <a className="btn primary" href="#training">
+                Termine entdecken <ArrowUpRight size={17} />
+              </a>
+              <a className="btn" href="#training-anmeldung">
+                Trainingsanmeldung
+              </a>
+              <Link className="btn" href="/angebote">
+                <Gift size={17} /> Member Benefits
+              </Link>
+            </div>
+          )}
         </section>
 
         {loading ? (
@@ -355,7 +373,236 @@ export default function Home() {
             <div className="empty">Dein Mitgliederbereich wird geladen …</div>
           </section>
         ) : !isApprovedMember ? (
-          memberArea
+          <section id="mitgliederzugang" className="container section">
+            <div
+              className="card"
+              style={{
+                maxWidth: 460,
+                margin: '0 auto',
+                padding: 28,
+                borderRadius: 22,
+              }}
+            >
+              <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                <div
+                  style={{
+                    width: 58,
+                    height: 58,
+                    borderRadius: 18,
+                    margin: '0 auto 16px',
+                    display: 'grid',
+                    placeItems: 'center',
+                    background: 'rgba(34,211,238,0.12)',
+                    color: 'var(--cyan)',
+                  }}
+                >
+                  <Users size={28} />
+                </div>
+
+                <p className="eyebrow">PADELCLUBBING MEMBER AREA</p>
+                <h2>
+                  {signedIn
+                    ? 'Dein Zugang'
+                    : authMode === 'login'
+                      ? 'Willkommen zurück'
+                      : 'Mitglied werden'}
+                </h2>
+                <p className="muted">
+                  {signedIn
+                    ? 'Deine Registrierung wird vom Verein geprüft.'
+                    : authMode === 'login'
+                      ? 'Melde dich an und entdecke deinen Club.'
+                      : 'Beantrage deinen persönlichen Zugang zum Mitgliederportal.'}
+                </p>
+              </div>
+
+              {signedIn ? (
+                <>
+                  <div className="empty" style={{ marginBottom: 18 }}>
+                    {profileError
+                      ? 'Dein Mitgliederstatus konnte nicht geladen werden. Bitte versuche es erneut.'
+                      : 'Dein Konto ist noch nicht für den Mitgliederbereich freigeschaltet. Nach der Freigabe erhältst du Zugang zu Events, Trainings, News und Member Benefits.'}
+                  </div>
+
+                  <button
+                    className="btn"
+                    onClick={handleLogout}
+                    disabled={loggingOut}
+                    style={{
+                      width: '100%',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <LogOut size={17} />
+                    {loggingOut ? 'Abmelden …' : 'Abmelden'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div
+                    className="actions"
+                    style={{ marginBottom: 22, justifyContent: 'center' }}
+                  >
+                    <button
+                      type="button"
+                      className={authMode === 'login' ? 'btn primary' : 'btn'}
+                      onClick={() => {
+                        setAuthMode('login');
+                        setLoginMessage('');
+                      }}
+                    >
+                      Benutzer-Login
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        authMode === 'register' ? 'btn primary' : 'btn'
+                      }
+                      onClick={() => {
+                        setAuthMode('register');
+                        setLoginMessage('');
+                      }}
+                    >
+                      Mitglied werden
+                    </button>
+                  </div>
+
+                  {authMode === 'login' ? (
+                    <form onSubmit={handleLogin}>
+                      <div style={{ marginBottom: 16 }}>
+                        <label
+                          htmlFor="home-email"
+                          style={{
+                            display: 'block',
+                            marginBottom: 8,
+                          }}
+                        >
+                          E-Mail-Adresse
+                        </label>
+                        <input
+                          id="home-email"
+                          type="email"
+                          autoComplete="username"
+                          required
+                          value={loginEmail}
+                          onChange={(e) => setLoginEmail(e.target.value)}
+                          placeholder="name@beispiel.at"
+                          style={{
+                            width: '100%',
+                            padding: '14px 16px',
+                            borderRadius: 12,
+                            border: '1px solid var(--border, #333)',
+                            background: 'var(--input-bg, #111)',
+                            color: 'inherit',
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                      </div>
+
+                      <div style={{ marginBottom: 18 }}>
+                        <label
+                          htmlFor="home-password"
+                          style={{
+                            display: 'block',
+                            marginBottom: 8,
+                          }}
+                        >
+                          Passwort
+                        </label>
+                        <input
+                          id="home-password"
+                          type="password"
+                          autoComplete="current-password"
+                          required
+                          value={loginPassword}
+                          onChange={(e) => setLoginPassword(e.target.value)}
+                          placeholder="Dein Passwort"
+                          style={{
+                            width: '100%',
+                            padding: '14px 16px',
+                            borderRadius: 12,
+                            border: '1px solid var(--border, #333)',
+                            background: 'var(--input-bg, #111)',
+                            color: 'inherit',
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                      </div>
+
+                      {loginMessage && (
+                        <p
+                          role="alert"
+                          className="muted"
+                          style={{
+                            color: 'var(--pink, #fb7185)',
+                            marginBottom: 16,
+                          }}
+                        >
+                          {loginMessage}
+                        </p>
+                      )}
+
+                      <button
+                        className="btn primary"
+                        type="submit"
+                        disabled={loginBusy}
+                        style={{
+                          width: '100%',
+                          justifyContent: 'center',
+                          padding: 15,
+                        }}
+                      >
+                        {loginBusy ? 'Anmeldung läuft …' : 'Jetzt anmelden'}
+                        {!loginBusy && <ArrowUpRight size={18} />}
+                      </button>
+
+                      <p
+                        style={{
+                          textAlign: 'center',
+                          marginTop: 18,
+                        }}
+                      >
+                        <Link href="/login" className="muted">
+                          Passwort vergessen?
+                        </Link>
+                      </p>
+                    </form>
+                  ) : (
+                    <div>
+                      <p className="muted">
+                        Nach deiner Registrierung prüft der Verein deine
+                        Angaben. Dein Zugang zu den geschützten Inhalten wird
+                        erst nach der Freigabe aktiviert.
+                      </p>
+                      <Link
+                        href="/mitglied-werden"
+                        className="btn primary"
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'center',
+                          marginTop: 18,
+                        }}
+                      >
+                        Registrierung öffnen <ArrowUpRight size={18} />
+                      </Link>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <p
+                className="muted"
+                style={{
+                  textAlign: 'center',
+                  fontSize: 12,
+                  marginTop: 22,
+                  marginBottom: 0,
+                }}
+              >
+                Geschützter Mitgliederbereich · Freischaltung durch den Verein
+              </p>
+            </div>
+          </section>
         ) : (
           <>
             <section id="training" className="container section">
@@ -418,7 +665,8 @@ export default function Home() {
                   <h2>Trainingsanmeldung</h2>
                   <p className="muted">
                     Entdecke die nächsten Trainings und sichere dir deinen
-                    Platz. Bei ausgebuchten Trainings ist eine Warteliste möglich.
+                    Platz. Bei ausgebuchten Trainings ist eine Warteliste
+                    möglich.
                   </p>
                 </div>
               </div>
@@ -473,8 +721,8 @@ export default function Home() {
                   <Users color="var(--cyan)" size={28} />
                   <h3>Verein &amp; Community</h3>
                   <p className="muted">
-                    Gemeinsam besser werden, neue Leute kennenlernen und
-                    Padel erleben.
+                    Gemeinsam besser werden, neue Leute kennenlernen und Padel
+                    erleben.
                   </p>
                 </article>
 
@@ -490,8 +738,8 @@ export default function Home() {
                   <Images color="#b78aff" size={28} />
                   <h3>Erinnerungen teilen</h3>
                   <p className="muted">
-                    Fotos und Highlights unserer Trainings und Events an
-                    einem Ort.
+                    Fotos und Highlights unserer Trainings und Events an einem
+                    Ort.
                   </p>
                 </article>
 
@@ -533,7 +781,10 @@ export default function Home() {
                 >
                   <Instagram size={17} /> Instagram
                 </a>
-                <a className="btn" href="mailto:thepadelclubbing@gmail.com">
+                <a
+                  className="btn"
+                  href="mailto:thepadelclubbing@gmail.com"
+                >
                   thepadelclubbing@gmail.com
                 </a>
               </div>
