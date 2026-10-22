@@ -1,3 +1,35 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { supabase } from '@/lib/supabase';
+import { CalendarDays, MapPin, Users } from 'lucide-react';
+
+type Training = {
+  id: string;
+  title: string;
+  description: string;
+  location: string;
+  starts_at: string;
+  max_participants: number;
+  image_url: string | null;
+  published: boolean;
+};
+
+type Registration = {
+  id: string;
+  training_id: string;
+  status: 'registered' | 'waitlist' | 'cancelled';
+};
+
+export default function TrainingList() {
+  const [trainings, setTrainings] = useState<Training[]>([]);
+  const [myRegistrations, setMyRegistrations] = useState<Record<string, Registration>>({});
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [userId, setUserId] = useState<string | null>(null);
+  const [message, setMessage] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!supabase) return;
     const { data: auth } = await supabase.auth.getUser();
