@@ -1,5 +1,12 @@
+
 import Link from 'next/link';
-import { Trophy, Images, Users, ArrowUpRight, Instagram } from 'lucide-react';
+import {
+  Trophy,
+  Images,
+  Users,
+  ArrowUpRight,
+  Instagram,
+} from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import TrainingList from '@/components/training-list';
 
@@ -13,7 +20,7 @@ type Entry = {
   image_url?: string | null;
 };
 
-async function getEntries(table: string): Promise<Entry[]> {
+async function getEntries(table: 'events' | 'news'): Promise<Entry[]> {
   if (!supabase) return [];
 
   const { data, error } = await supabase
@@ -58,6 +65,7 @@ export default async function Home() {
 
           <div className="navlinks">
             <a href="#training">Training &amp; Turniere</a>
+            <a href="#training-anmeldung">Trainingsanmeldung</a>
             <a href="#news">News</a>
             <a href="#verein">Der Verein</a>
             <Link href="/login">Mitglieder-Login ↗</Link>
@@ -66,6 +74,7 @@ export default async function Home() {
       </header>
 
       <main>
+        {/* HERO */}
         <section className="container hero">
           <img
             className="heroimg"
@@ -98,12 +107,15 @@ export default async function Home() {
           </div>
         </section>
 
+        {/* BISHERIGE VEREINSTERMINE UND TURNIERE */}
         <section id="training" className="container section">
           <div className="sectionhead">
             <div>
               <p className="eyebrow">Auf dem Court</p>
               <h2>Training &amp; Turniere</h2>
-              <p className="muted">Alle wichtigen Termine an einem Ort.</p>
+              <p className="muted">
+                Alle wichtigen Termine an einem Ort.
+              </p>
             </div>
 
             <Link className="btn" href="/login">
@@ -115,30 +127,69 @@ export default async function Home() {
             <div className="grid">
               {events.map((e) => (
                 <article className="card" key={e.id}>
-                  <span className="tag">{e.category || 'Vereinstermin'}</span>
+                  <span className="tag">
+                    {e.category || 'Vereinstermin'}
+                  </span>
+
                   <p className="date">{dateLabel(e.starts_at)}</p>
+
                   <h3>{e.title}</h3>
+
                   <p className="muted">
                     {e.description || 'Weitere Informationen folgen.'}
                   </p>
-                  {e.location && <p className="small">📍 {e.location}</p>}
+
+                  {e.location && (
+                    <p className="small">📍 {e.location}</p>
+                  )}
                 </article>
               ))}
             </div>
           ) : (
             <div className="empty">
-              <strong>Die nächsten Termine werden hier veröffentlicht.</strong>
+              <strong>
+                Die nächsten Termine werden hier veröffentlicht.
+              </strong>
+
               <p>
-                Trainings, Turniere und Meisterschaften erscheinen automatisch,
-                sobald ein Admin sie im Verwaltungsbereich veröffentlicht.
+                Trainings, Turniere und Meisterschaften erscheinen
+                automatisch, sobald ein Admin sie im Verwaltungsbereich
+                veröffentlicht.
               </p>
-              <Link className="btn" href="/admin">
-                Zum Admin-Bereich
+
+              <Link className="btn" href="/login">
+                Zum Mitgliederbereich
               </Link>
             </div>
           )}
         </section>
 
+        {/* NEU: ANMELDUNG ZU KONKRETEN TRAININGSTERMINEN */}
+        <section
+          id="training-anmeldung"
+          className="container section"
+        >
+          <div className="sectionhead">
+            <div>
+              <p className="eyebrow">Gemeinsam am Court</p>
+              <h2>Trainings &amp; Anmeldung</h2>
+
+              <p className="muted">
+                Entdecke unsere nächsten Trainingstermine und sichere
+                dir deinen Platz. Die Termine werden vom Verein
+                veröffentlicht.
+              </p>
+            </div>
+
+            <Link className="btn" href="/login">
+              Mitglieder-Login
+            </Link>
+          </div>
+
+          <TrainingList />
+        </section>
+
+        {/* NEWS */}
         <section id="news" className="container section">
           <div className="sectionhead">
             <div>
@@ -163,32 +214,42 @@ export default async function Home() {
                       }}
                     />
                   )}
+
                   <span className="tag">News</span>
+
                   <h3>{n.title}</h3>
+
                   <p className="muted">{n.description}</p>
                 </article>
               ))}
             </div>
           ) : (
             <div className="empty">
-              Hier findet ihr künftig Neuigkeiten, Rückblicke und Infos aus dem Verein.
+              Hier findet ihr künftig Neuigkeiten, Rückblicke und Infos
+              aus dem Verein.
             </div>
           )}
         </section>
 
+        {/* VEREIN */}
         <section id="verein" className="container section">
           <div className="grid">
             <article className="card">
               <Users color="var(--cyan)" size={28} />
+
               <h3>Verein &amp; Community</h3>
+
               <p className="muted">
-                Gemeinsam besser werden, neue Leute kennenlernen und Padel erleben.
+                Gemeinsam besser werden, neue Leute kennenlernen und
+                Padel erleben.
               </p>
             </article>
 
             <article className="card">
               <Trophy color="var(--pink)" size={28} />
+
               <h3>Turniere &amp; Meisterschaften</h3>
+
               <p className="muted">
                 Spiele mit, sammle Erfahrung und vertrete unseren Verein.
               </p>
@@ -196,9 +257,12 @@ export default async function Home() {
 
             <article className="card">
               <Images color="#b78aff" size={28} />
+
               <h3>Erinnerungen teilen</h3>
+
               <p className="muted">
-                Fotos und Highlights unserer Trainings und Events an einem Ort.
+                Fotos und Highlights unserer Trainings und Events an
+                einem Ort.
               </p>
             </article>
           </div>
@@ -222,21 +286,28 @@ export default async function Home() {
               <Instagram size={17} /> Instagram
             </a>
 
-            <a className="btn" href="mailto:thepadelclubbing@gmail.com">
+            <a
+              className="btn"
+              href="mailto:thepadelclubbing@gmail.com"
+            >
               thepadelclubbing@gmail.com
             </a>
           </div>
         </section>
       </main>
 
+      {/* FOOTER */}
       <footer className="footer">
         <div className="container">
           © {new Date().getFullYear()} Padelclubbing ·{' '}
-          <a href="https://www.padelclubbing.at/">padelclubbing.at</a> ·{' '}
-          <Link href="/admin">Admin</Link>
+          <a href="https://www.padelclubbing.at/">
+            padelclubbing.at
+          </a>{' '}
+          · <Link href="/admin">Admin</Link>
+
           <p>
-            Hinweis: Vor Veröffentlichung Impressum, Datenschutzerklärung und
-            Vereinsinformationen ergänzen.
+            Hinweis: Vor Veröffentlichung Impressum,
+            Datenschutzerklärung und Vereinsinformationen ergänzen.
           </p>
         </div>
       </footer>
