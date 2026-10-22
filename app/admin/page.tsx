@@ -45,6 +45,7 @@ export default function Admin() {
 
   const [user, setUser] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
+  const [checking, setChecking] = useState(true);
   const [events, setEvents] = useState<Entry[]>([]);
   const [news, setNews] = useState<Entry[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -64,7 +65,10 @@ export default function Admin() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    if (!supabase) return;
+    if (!supabase) {
+      setChecking(false);
+      return;
+    }
 
     const {
       data: { user: currentUser },
@@ -73,6 +77,7 @@ export default function Admin() {
 
     if (authError || !currentUser) {
       router.replace('/login');
+      setChecking(false);
       return;
     }
 
@@ -92,6 +97,7 @@ export default function Admin() {
     ) {
       setIsAdmin(false);
       setMessage('Kein Adminzugriff. Bitte mit einem Admin-Konto anmelden.');
+      setChecking(false);
       return;
     }
 
@@ -114,17 +120,21 @@ export default function Admin() {
       setMessage(
         'Fehler beim Laden. Bitte Tabellen und Supabase-Berechtigungen prüfen.'
       );
+      setChecking(false);
       return;
     }
 
     setEvents((e.data || []) as Entry[]);
     setNews((n.data || []) as Entry[]);
     setMembers((m.data || []) as Member[]);
+    setChecking(false);
   }, [router]);
 
   useEffect(() => {
     if (supabaseReady) {
       void load();
+    } else {
+      setChecking(false);
     }
   }, [load]);
 
@@ -133,7 +143,11 @@ export default function Admin() {
     setEditingId(entry.id);
     setTitle(entry.title || '');
     setDescription(entry.description || '');
-    setStartsAt(entry.starts_at ? new Date(entry.starts_at).toISOString().slice(0, 16) : '');
+    setStartsAt(
+      entry.starts_at
+        ? new Date(entry.starts_at).toISOString().slice(0, 16)
+        : ''
+    );
     setLocation(entry.location || '');
     setCategory(entry.category || 'Training');
     setPublished(Boolean(entry.published));
@@ -153,58 +167,91 @@ export default function Admin() {
     setPublished(true);
     setImageUrl('');
     setImageFile(null);
-    const fileInput = document.getElementById('entry-image') as HTMLInputElement | null;
+
+    const fileInput = document.getElementById(
+      'entry-image'
+    ) as HTMLInputElement | null;
+
     if (fileInput) fileInput.value = '';
   }
 
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
     if (!supabase || !isAdmin) {
       setMessage('Du benötigst Adminrechte, um Inhalte zu speichern.');
       return;
     }
+
     setBusy(true);
     setMessage('');
 
-    let finalImageUrl = imageUrl || null;
-    if (imageFile) {
-      const safeName = imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
-      const path = `${Date.now()}-${safeName}`;
-      const { error: uploadError } = await supabase.storage
-        .from('training-images')
-        .upload(path, imageFile, { upsert: false, contentType: imageFile.type });
-      if (uploadError) {
-        setBusy(false);
-        setMessage('Bild-Upload fehlgeschlagen: ' + uploadError.message);
+    try {
+      let finalImageUrl: string | null = imageUrl || null;
+
+      if (imageFile) {
+        const safeName = imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+        const path = `${Date.now()}-${safeName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('training-images')
+          .upload(path, imageFile, {
+            upsert: false,
+            contentType: imageFile.type,
+          });
+
+        if (uploadError) {
+          setMessage('Bild-Upload fehlgeschlagen: ' + uploadError.message);
+          return;
+        }
+
+        finalImageUrl = supabase.storage
+          .from('training-images')
+          .getPublicUrl(path).data.publicUrl;
+      }
+
+      const row: Record<string, unknown> = {
+        title: title.trim(),
+        description: description.trim() || null,
+        published,
+        image_url: finalImageUrl,
+      };
+
+      if (kind === 'events') {
+        row.starts_at = startsAt
+          ? new Date(startsAt).toISOString()
+          : null;
+        row.location = location.trim() || null;
+        row.category = category || 'Vereinstermin';
+      }
+
+      const query = editingId
+        ? supabase.from(kind).update(row).eq('id', editingId)
+        : supabase.from(kind).insert(row);
+
+      const { error } = await query;
+
+      if (error) {
+        setMessage('Fehler: ' + error.message);
         return;
       }
-      finalImageUrl = supabase.storage.from('training-images').getPublicUrl(path).data.publicUrl;
-    }
 
-    const row: Record<string, unknown> = {
-      title: title.trim(),
-      description: description.trim() || null,
-      published,
-    };
-    if (kind === 'events') {
-      row.starts_at = startsAt ? new Date(startsAt).toISOString() : null;
-      row.location = location.trim() || null;
-      row.category = category || 'Vereinstermin';
-    }
-    row.image_url = finalImageUrl;
+      setMessage(
+        editingId
+          ? 'Änderungen erfolgreich gespeichert.'
+          : 'Eintrag erfolgreich gespeichert.'
+      );
 
-    const query = editingId
-      ? supabase.from(kind).update(row).eq('id', editingId)
-      : supabase.from(kind).insert(row);
-    const { error } = await query;
-    setBusy(false);
-    if (error) {
-      setMessage('Fehler: ' + error.message);
-      return;
+      resetForm();
+      await load();
+    } catch (error) {
+      setMessage(
+        'Unerwarteter Fehler: ' +
+          (error instanceof Error ? error.message : 'Unbekannter Fehler')
+      );
+    } finally {
+      setBusy(false);
     }
-    setMessage(editingId ? 'Änderungen erfolgreich gespeichert.' : 'Eintrag erfolgreich gespeichert.');
-    resetForm();
-    await load();
   }
 
   async function remove(table: 'events' | 'news', id: string) {
@@ -214,7 +261,10 @@ export default function Admin() {
     const { error } = await supabase.from(table).delete().eq('id', id);
 
     setMessage(error ? 'Fehler: ' + error.message : 'Eintrag gelöscht.');
-    await load();
+
+    if (!error) {
+      await load();
+    }
   }
 
   async function updateMemberStatus(
@@ -239,30 +289,35 @@ export default function Admin() {
     setBusy(true);
     setMessage('');
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status })
-      .eq('id', id)
-      .eq('role', 'member');
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ status })
+        .eq('id', id)
+        .eq('role', 'member');
 
-    setBusy(false);
+      if (error) {
+        setMessage('Fehler bei der Freigabe: ' + error.message);
+        return;
+      }
 
-    if (error) {
-      setMessage('Fehler bei der Freigabe: ' + error.message);
-      return;
+      setMessage(
+        status === 'approved'
+          ? 'Mitglied erfolgreich freigegeben.'
+          : 'Mitgliedsantrag abgelehnt.'
+      );
+
+      await load();
+    } finally {
+      setBusy(false);
     }
-
-    setMessage(
-      status === 'approved'
-        ? 'Mitglied erfolgreich freigegeben.'
-        : 'Mitgliedsantrag abgelehnt.'
-    );
-
-    await load();
   }
 
   async function logout() {
-    if (supabase) await supabase.auth.signOut();
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+
     router.replace('/login');
     router.refresh();
   }
@@ -276,11 +331,20 @@ export default function Admin() {
     );
   }
 
+  if (checking) {
+    return (
+      <main className="container section">
+        <h1>Adminbereich</h1>
+        <p>Adminberechtigung wird überprüft …</p>
+      </main>
+    );
+  }
+
   if (!isAdmin) {
     return (
       <main className="container section">
         <h1>Adminbereich</h1>
-        <p>{message || 'Adminberechtigung wird überprüft …'}</p>
+        <p>{message || 'Kein Adminzugriff.'}</p>
         <Link className="btn" href="/login">
           Zum Login
         </Link>
@@ -298,10 +362,11 @@ export default function Admin() {
           <img src="/padelclubbing-logo.jpg" alt="Logo" />
           <span>PADELCLUBBING ADMIN</span>
         </Link>
+
         <div className="navlinks">
           <Link href="/">Website ansehen ↗</Link>
           <span>{user}</span>
-          <button className="btn" onClick={logout}>
+          <button className="btn" type="button" onClick={logout}>
             <LogOut size={15} /> Abmelden
           </button>
         </div>
@@ -312,8 +377,8 @@ export default function Admin() {
           <p className="eyebrow">Verwaltung</p>
           <a href="#members">Mitglieder ({pendingMembers.length} offen)</a>
           <a href="#new">+ Neuer Eintrag</a>
-          <a href="#training-management">Trainingsverwaltung & Anmeldungen</a>
-          <a href="#events">Bisherige Termine & Turniere</a>
+          <a href="#training-management">Trainingsverwaltung &amp; Anmeldungen</a>
+          <a href="#events">Bisherige Termine &amp; Turniere</a>
           <a href="#news">News verwalten</a>
           <a href="mailto:thepadelclubbing@gmail.com">Hilfe / Kontakt</a>
         </aside>
@@ -324,7 +389,11 @@ export default function Admin() {
             Admin-Dashboard
           </h1>
 
-          {message && <p className="success" role="status">{message}</p>}
+          {message && (
+            <p className="success" role="status">
+              {message}
+            </p>
+          )}
 
           <section id="members" className="section">
             <div className="sectionhead">
@@ -335,7 +404,12 @@ export default function Admin() {
                   {pendingMembers.length} Antrag/Anträge warten auf Freigabe.
                 </p>
               </div>
-              <button className="btn" onClick={() => void load()}>
+
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void load()}
+              >
                 <RefreshCw size={15} /> Aktualisieren
               </button>
             </div>
@@ -368,6 +442,7 @@ export default function Admin() {
                     <div className="actions">
                       <button
                         className="btn primary"
+                        type="button"
                         disabled={busy}
                         onClick={() =>
                           void updateMemberStatus(m.id, 'approved')
@@ -375,8 +450,10 @@ export default function Admin() {
                       >
                         <Check size={16} /> Freigeben
                       </button>
+
                       <button
                         className="btn"
+                        type="button"
                         disabled={busy}
                         onClick={() =>
                           void updateMemberStatus(m.id, 'rejected')
@@ -391,6 +468,7 @@ export default function Admin() {
             </div>
 
             <h3 style={{ marginTop: 24 }}>Bearbeitete Anträge</h3>
+
             <div className="adminlist">
               {processedMembers.length === 0 ? (
                 <div className="empty">Noch keine bearbeiteten Anträge.</div>
@@ -402,9 +480,7 @@ export default function Admin() {
                         {m.first_name} {m.last_name}
                       </strong>
                       <p>
-                        {m.status === 'approved'
-                          ? 'Freigegeben'
-                          : 'Abgelehnt'}
+                        {m.status === 'approved' ? 'Freigegeben' : 'Abgelehnt'}
                       </p>
                     </div>
                     <span className="tag">{m.status}</span>
@@ -415,24 +491,39 @@ export default function Admin() {
           </section>
 
           <section id="new" className="card" style={{ marginTop: 16 }}>
-            <h2>{editingId ? 'Eintrag bearbeiten' : 'Neuen Inhalt erstellen'}</h2>
+            <h2>
+              {editingId ? 'Eintrag bearbeiten' : 'Neuen Inhalt erstellen'}
+            </h2>
 
             <div className="actions">
               <button
+                type="button"
                 className={'btn ' + (kind === 'events' ? 'primary' : '')}
-                onClick={() => { if (kind !== 'events') resetForm(); setKind('events'); }}
+                onClick={() => {
+                  if (kind !== 'events') resetForm();
+                  setKind('events');
+                }}
               >
                 Training / Turnier
               </button>
+
               <button
+                type="button"
                 className={'btn ' + (kind === 'news' ? 'primary' : '')}
-                onClick={() => { if (kind !== 'news') resetForm(); setKind('news'); }}
+                onClick={() => {
+                  if (kind !== 'news') resetForm();
+                  setKind('news');
+                }}
               >
                 Vereinsnews
               </button>
             </div>
 
-            <form className="form" onSubmit={save} style={{ marginTop: 18 }}>
+            <form
+              className="form"
+              onSubmit={save}
+              style={{ marginTop: 18 }}
+            >
               <div className="field">
                 <label htmlFor="title">Titel</label>
                 <input
@@ -458,7 +549,7 @@ export default function Admin() {
                 />
               </div>
 
-              {kind === 'events' ? (
+              {kind === 'events' && (
                 <>
                   <div className="field">
                     <label htmlFor="startsAt">Datum und Uhrzeit</label>
@@ -469,6 +560,7 @@ export default function Admin() {
                       onChange={(e) => setStartsAt(e.target.value)}
                     />
                   </div>
+
                   <div className="field">
                     <label htmlFor="location">Ort</label>
                     <input
@@ -478,6 +570,7 @@ export default function Admin() {
                       placeholder="z. B. Wildon"
                     />
                   </div>
+
                   <div className="field">
                     <label htmlFor="category">Art</label>
                     <select
@@ -501,10 +594,15 @@ export default function Admin() {
                   id="entry-image"
                   type="file"
                   accept="image/*"
-                  onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+                  onChange={(e) =>
+                    setImageFile(e.target.files?.[0] || null)
+                  }
                 />
                 <span className="small">
-                  Ein neues Foto ersetzt das bisherige Bild. {imageUrl && !imageFile ? 'Aktuell ist bereits ein Bild hinterlegt.' : 'Unterstützt JPG, PNG und WebP.'}
+                  Ein neues Foto ersetzt das bisherige Bild.{' '}
+                  {imageUrl && !imageFile
+                    ? 'Aktuell ist bereits ein Bild hinterlegt.'
+                    : 'Unterstützt JPG, PNG und WebP.'}
                 </span>
               </div>
 
@@ -518,11 +616,24 @@ export default function Admin() {
               </label>
 
               <div className="actions">
-                <button className="btn primary" disabled={busy}>
+                <button className="btn primary" type="submit" disabled={busy}>
                   {editingId ? <Pencil size={17} /> : <Plus size={17} />}
-                  {busy ? 'Speichert …' : editingId ? 'Änderungen speichern' : 'Eintrag speichern'}
+                  {busy
+                    ? 'Speichert …'
+                    : editingId
+                      ? 'Änderungen speichern'
+                      : 'Eintrag speichern'}
                 </button>
-                {editingId && <button type="button" className="btn" onClick={resetForm}>Bearbeitung abbrechen</button>}
+
+                {editingId && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={resetForm}
+                  >
+                    Bearbeitung abbrechen
+                  </button>
+                )}
               </div>
             </form>
           </section>
@@ -533,15 +644,20 @@ export default function Admin() {
             <div className="sectionhead">
               <div>
                 <p className="eyebrow">Termine</p>
-                <h2>Trainings & Turniere</h2>
+                <h2>Trainings &amp; Turniere</h2>
               </div>
-              <button className="btn" onClick={() => void load()}>
+
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void load()}
+              >
                 <RefreshCw size={15} /> Aktualisieren
               </button>
             </div>
 
             <div className="adminlist">
-              {events.length ? (
+              {events.length > 0 ? (
                 events.map((x) => (
                   <div className="adminitem" key={x.id}>
                     <div>
@@ -554,11 +670,22 @@ export default function Admin() {
                         {x.published ? 'Veröffentlicht' : 'Entwurf'}
                       </p>
                     </div>
+
                     <div className="actions">
-                      <button type="button" className="btn" onClick={() => startEdit('events', x)}>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => startEdit('events', x)}
+                      >
                         <Pencil size={16} /> Bearbeiten
                       </button>
-                      <button type="button" className="btn" aria-label="Löschen" onClick={() => void remove('events', x.id)}>
+
+                      <button
+                        type="button"
+                        className="btn"
+                        aria-label="Löschen"
+                        onClick={() => void remove('events', x.id)}
+                      >
                         <Trash2 size={16} />
                       </button>
                     </div>
@@ -579,18 +706,29 @@ export default function Admin() {
             </div>
 
             <div className="adminlist">
-              {news.length ? (
+              {news.length > 0 ? (
                 news.map((x) => (
                   <div className="adminitem" key={x.id}>
                     <div>
                       <strong>{x.title}</strong>
                       <p>{x.published ? 'Veröffentlicht' : 'Entwurf'}</p>
                     </div>
+
                     <div className="actions">
-                      <button type="button" className="btn" onClick={() => startEdit('news', x)}>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => startEdit('news', x)}
+                      >
                         <Pencil size={16} /> Bearbeiten
                       </button>
-                      <button type="button" className="btn" aria-label="Löschen" onClick={() => void remove('news', x.id)}>
+
+                      <button
+                        type="button"
+                        className="btn"
+                        aria-label="Löschen"
+                        onClick={() => void remove('news', x.id)}
+                      >
                         <Trash2 size={16} />
                       </button>
                     </div>
