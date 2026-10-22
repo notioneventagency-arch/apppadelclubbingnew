@@ -7,6 +7,7 @@ import { supabase, supabaseReady } from '@/lib/supabase';
 import TrainingManagement from '@/components/training-management';
 import {
   Plus,
+  Pencil,
   LogOut,
   Trash2,
   RefreshCw,
@@ -56,6 +57,8 @@ export default function Admin() {
   const [category, setCategory] = useState('Training');
   const [published, setPublished] = useState(true);
   const [imageUrl, setImageUrl] = useState('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -125,47 +128,82 @@ export default function Admin() {
     }
   }, [load]);
 
-  async function save(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function startEdit(table: 'events' | 'news', entry: Entry) {
+    setKind(table);
+    setEditingId(entry.id);
+    setTitle(entry.title || '');
+    setDescription(entry.description || '');
+    setStartsAt(entry.starts_at ? new Date(entry.starts_at).toISOString().slice(0, 16) : '');
+    setLocation(entry.location || '');
+    setCategory(entry.category || 'Training');
+    setPublished(Boolean(entry.published));
+    setImageUrl(entry.image_url || '');
+    setImageFile(null);
+    setMessage('Eintrag wird bearbeitet. Änderungen unten speichern.');
+    document.getElementById('new')?.scrollIntoView({ behavior: 'smooth' });
+  }
 
-    if (!supabase || !isAdmin) {
-      setMessage('Du benötigst Adminrechte, um Inhalte zu speichern.');
-      return;
-    }
-
-    setBusy(true);
-    setMessage('');
-
-    const row: Record<string, unknown> = {
-      title,
-      description: description || null,
-      published,
-    };
-
-    if (kind === 'events') {
-      row.starts_at = startsAt ? new Date(startsAt).toISOString() : null;
-      row.location = location || null;
-      row.category = category || 'Vereinstermin';
-    } else {
-      row.image_url = imageUrl || null;
-    }
-
-    const { error } = await supabase.from(kind).insert(row);
-
-    setBusy(false);
-
-    if (error) {
-      setMessage('Fehler: ' + error.message);
-      return;
-    }
-
-    setMessage('Eintrag erfolgreich gespeichert.');
+  function resetForm() {
+    setEditingId(null);
     setTitle('');
     setDescription('');
     setStartsAt('');
     setLocation('');
+    setCategory('Training');
+    setPublished(true);
     setImageUrl('');
+    setImageFile(null);
+    const fileInput = document.getElementById('entry-image') as HTMLInputElement | null;
+    if (fileInput) fileInput.value = '';
+  }
 
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!supabase || !isAdmin) {
+      setMessage('Du benötigst Adminrechte, um Inhalte zu speichern.');
+      return;
+    }
+    setBusy(true);
+    setMessage('');
+
+    let finalImageUrl = imageUrl || null;
+    if (imageFile) {
+      const safeName = imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+      const path = `${Date.now()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage
+        .from('training-images')
+        .upload(path, imageFile, { upsert: false, contentType: imageFile.type });
+      if (uploadError) {
+        setBusy(false);
+        setMessage('Bild-Upload fehlgeschlagen: ' + uploadError.message);
+        return;
+      }
+      finalImageUrl = supabase.storage.from('training-images').getPublicUrl(path).data.publicUrl;
+    }
+
+    const row: Record<string, unknown> = {
+      title: title.trim(),
+      description: description.trim() || null,
+      published,
+    };
+    if (kind === 'events') {
+      row.starts_at = startsAt ? new Date(startsAt).toISOString() : null;
+      row.location = location.trim() || null;
+      row.category = category || 'Vereinstermin';
+    }
+    row.image_url = finalImageUrl;
+
+    const query = editingId
+      ? supabase.from(kind).update(row).eq('id', editingId)
+      : supabase.from(kind).insert(row);
+    const { error } = await query;
+    setBusy(false);
+    if (error) {
+      setMessage('Fehler: ' + error.message);
+      return;
+    }
+    setMessage(editingId ? 'Änderungen erfolgreich gespeichert.' : 'Eintrag erfolgreich gespeichert.');
+    resetForm();
     await load();
   }
 
@@ -377,18 +415,18 @@ export default function Admin() {
           </section>
 
           <section id="new" className="card" style={{ marginTop: 16 }}>
-            <h2>Neuen Inhalt erstellen</h2>
+            <h2>{editingId ? 'Eintrag bearbeiten' : 'Neuen Inhalt erstellen'}</h2>
 
             <div className="actions">
               <button
                 className={'btn ' + (kind === 'events' ? 'primary' : '')}
-                onClick={() => setKind('events')}
+                onClick={() => { if (kind !== 'events') resetForm(); setKind('events'); }}
               >
                 Training / Turnier
               </button>
               <button
                 className={'btn ' + (kind === 'news' ? 'primary' : '')}
-                onClick={() => setKind('news')}
+                onClick={() => { if (kind !== 'news') resetForm(); setKind('news'); }}
               >
                 Vereinsnews
               </button>
@@ -455,21 +493,20 @@ export default function Admin() {
                     </select>
                   </div>
                 </>
-              ) : (
-                <div className="field">
-                  <label htmlFor="imageUrl">Bild-URL (optional)</label>
-                  <input
-                    id="imageUrl"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="https://…"
-                  />
-                  <span className="small">
-                    Öffentlich erreichbarer Bildlink; Foto-Upload kann später
-                    ergänzt werden.
-                  </span>
-                </div>
               )}
+
+              <div className="field">
+                <label htmlFor="entry-image">Bild hochladen (optional)</label>
+                <input
+                  id="entry-image"
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+                />
+                <span className="small">
+                  Ein neues Foto ersetzt das bisherige Bild. {imageUrl && !imageFile ? 'Aktuell ist bereits ein Bild hinterlegt.' : 'Unterstützt JPG, PNG und WebP.'}
+                </span>
+              </div>
 
               <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input
@@ -480,10 +517,13 @@ export default function Admin() {
                 Sofort öffentlich anzeigen
               </label>
 
-              <button className="btn primary" disabled={busy}>
-                <Plus size={17} />
-                {busy ? 'Speichert …' : 'Eintrag speichern'}
-              </button>
+              <div className="actions">
+                <button className="btn primary" disabled={busy}>
+                  {editingId ? <Pencil size={17} /> : <Plus size={17} />}
+                  {busy ? 'Speichert …' : editingId ? 'Änderungen speichern' : 'Eintrag speichern'}
+                </button>
+                {editingId && <button type="button" className="btn" onClick={resetForm}>Bearbeitung abbrechen</button>}
+              </div>
             </form>
           </section>
 
@@ -514,13 +554,14 @@ export default function Admin() {
                         {x.published ? 'Veröffentlicht' : 'Entwurf'}
                       </p>
                     </div>
-                    <button
-                      className="btn"
-                      aria-label="Löschen"
-                      onClick={() => void remove('events', x.id)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="actions">
+                      <button type="button" className="btn" onClick={() => startEdit('events', x)}>
+                        <Pencil size={16} /> Bearbeiten
+                      </button>
+                      <button type="button" className="btn" aria-label="Löschen" onClick={() => void remove('events', x.id)}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 ))
               ) : (
@@ -545,13 +586,14 @@ export default function Admin() {
                       <strong>{x.title}</strong>
                       <p>{x.published ? 'Veröffentlicht' : 'Entwurf'}</p>
                     </div>
-                    <button
-                      className="btn"
-                      aria-label="Löschen"
-                      onClick={() => void remove('news', x.id)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    <div className="actions">
+                      <button type="button" className="btn" onClick={() => startEdit('news', x)}>
+                        <Pencil size={16} /> Bearbeiten
+                      </button>
+                      <button type="button" className="btn" aria-label="Löschen" onClick={() => void remove('news', x.id)}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 ))
               ) : (
