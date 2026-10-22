@@ -1,3 +1,5 @@
+'use client';
+
 import Link from 'next/link';
 import {
   Trophy,
@@ -10,7 +12,9 @@ import {
   CalendarDays,
   Newspaper,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase, supabaseReady } from '@/lib/supabase';
 import TrainingList from '@/components/training-list';
 
 type Entry = {
@@ -25,6 +29,11 @@ type Entry = {
   created_at?: string;
 };
 
+type Profile = {
+  role: string;
+  status: string;
+};
+
 function dateLabel(value: string | null) {
   if (!value) return 'Termin folgt';
 
@@ -35,80 +44,217 @@ function dateLabel(value: string | null) {
   });
 }
 
-async function getEntries(
-  table: 'events' | 'news'
-): Promise<Entry[]> {
-  if (!supabase) return [];
+export default function Home() {
+  const router = useRouter();
 
-  const { data, error } = await supabase
-    .from(table)
-    .select('*')
-    .eq('published', true)
-    .order(table === 'events' ? 'starts_at' : 'created_at', {
-      ascending: table === 'events',
-      nullsFirst: false,
-    })
-    .limit(6);
+  const [loading, setLoading] = useState(true);
+  const [signedIn, setSignedIn] = useState(false);
+  const [isApprovedMember, setIsApprovedMember] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [profileError, setProfileError] = useState(false);
+  const [events, setEvents] = useState<Entry[]>([]);
+  const [news, setNews] = useState<Entry[]>([]);
+  const [loggingOut, setLoggingOut] = useState(false);
 
-  if (error) {
-    console.error(`Fehler beim Laden von ${table}:`, error.message);
-    return [];
-  }
+  const loadUser = useCallback(async (userId: string | null) => {
+    setProfileError(false);
+    setEvents([]);
+    setNews([]);
+    setIsApprovedMember(false);
+    setIsAdmin(false);
+    setSignedIn(Boolean(userId));
 
-  return (data || []) as Entry[];
-}
+    if (!userId || !supabase) {
+      setLoading(false);
+      return;
+    }
 
-export default async function Home() {
-  let isApprovedMember = false;
-  let isAdmin = false;
-  let signedIn = false;
-  let profileError = false;
+    const { data: profile, error: profileQueryError } = await supabase
+      .from('profiles')
+      .select('role,status')
+      .eq('id', userId)
+      .maybeSingle();
 
-  if (supabase) {
-    const { data: authData, error: authError } =
-      await supabase.auth.getUser();
+    if (profileQueryError) {
+      console.error('Profil konnte nicht geladen werden:', profileQueryError.message);
+      setProfileError(true);
+      setLoading(false);
+      return;
+    }
 
-    if (!authError && authData.user) {
-      signedIn = true;
+    const memberProfile = profile as Profile | null;
 
-      const { data: profile, error } = await supabase
-        .from('profiles')
-        .select('role,status')
-        .eq('id', authData.user.id)
-        .maybeSingle();
+    if (
+      !memberProfile ||
+      memberProfile.status !== 'approved' ||
+      !['member', 'admin'].includes(memberProfile.role)
+    ) {
+      setLoading(false);
+      return;
+    }
 
-      if (error) {
-        profileError = true;
-      } else if (profile?.status === 'approved') {
-        isAdmin = profile.role === 'admin';
-        isApprovedMember =
-          profile.role === 'member' || isAdmin;
+    const admin = memberProfile.role === 'admin';
+    setIsAdmin(admin);
+    setIsApprovedMember(true);
+
+    const [eventsResult, newsResult] = await Promise.all([
+      supabase
+        .from('events')
+        .select('*')
+        .eq('published', true)
+        .order('starts_at', {
+          ascending: true,
+          nullsFirst: false,
+        })
+        .limit(6),
+
+      supabase
+        .from('news')
+        .select('*')
+        .eq('published', true)
+        .order('created_at', { ascending: false })
+        .limit(6),
+    ]);
+
+    if (eventsResult.error) {
+      console.error('Events konnten nicht geladen werden:', eventsResult.error.message);
+    } else {
+      setEvents((eventsResult.data || []) as Entry[]);
+    }
+
+    if (newsResult.error) {
+      console.error('News konnten nicht geladen werden:', newsResult.error.message);
+    } else {
+      setNews((newsResult.data || []) as Entry[]);
+    }
+
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !supabaseReady) {
+      setLoading(false);
+      return;
+    }
+
+    let active = true;
+
+    async function checkCurrentUser() {
+      const { data, error } = await supabase!.auth.getUser();
+
+      if (!active) return;
+
+      if (error || !data.user) {
+        await loadUser(null);
+      } else {
+        await loadUser(data.user.id);
       }
     }
+
+    void checkCurrentUser();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+
+      // Supabase empfiehlt, im Auth-Callback keine weiteren
+      // Supabase-Abfragen direkt auszuführen.
+      const userId = session?.user?.id ?? null;
+      setLoading(true);
+
+      setTimeout(() => {
+        if (active) void loadUser(userId);
+      }, 0);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, [loadUser]);
+
+  async function handleLogout() {
+    if (!supabase) return;
+
+    setLoggingOut(true);
+
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      console.error('Abmeldung fehlgeschlagen:', error.message);
+      setLoggingOut(false);
+      return;
+    }
+
+    router.replace('/');
+    router.refresh();
   }
 
-  // Die Clubinhalte werden erst für freigeschaltete Konten geladen.
-  const [events, news] = isApprovedMember
-    ? await Promise.all([
-        getEntries('events'),
-        getEntries('news'),
-      ])
-    : [[], []];
+  const memberArea = (
+    <section className="container section">
+      <div className="card">
+        <Users size={30} color="var(--cyan)" />
+        <h2>Dein Mitgliederbereich</h2>
+
+        {profileError ? (
+          <>
+            <p className="muted">
+              Dein Mitgliederstatus konnte nicht geladen werden.
+              Bitte versuche es erneut.
+            </p>
+            <button
+              className="btn"
+              onClick={() => window.location.reload()}
+            >
+              Erneut versuchen
+            </button>
+          </>
+        ) : signedIn ? (
+          <>
+            <p className="muted">
+              Dein Konto ist noch nicht für den Mitgliederbereich
+              freigeschaltet. Nach der Prüfung durch den Verein
+              erhältst du Zugriff auf Termine, Trainings und News.
+            </p>
+            <button className="btn" onClick={handleLogout}>
+              Abmelden
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="muted">
+              Melde dich mit deinem freigeschalteten Mitgliedskonto an,
+              um Vereinstermine, Trainings, News und Mitgliederangebote
+              zu sehen.
+            </p>
+            <div className="actions">
+              <Link className="btn primary" href="/login">
+                Jetzt anmelden
+              </Link>
+              <Link className="btn" href="/mitglied-werden">
+                Mitglied werden
+              </Link>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
 
   return (
     <>
       <header className="container">
         <nav className="nav">
           <Link className="brand" href="/">
-            <img
-              src="/padelclubbing-logo.jpg"
-              alt="Padelclubbing Logo"
-            />
+            <img src="/padelclubbing-logo.jpg" alt="Padelclubbing Logo" />
             <span>PADELCLUBBING</span>
           </Link>
 
           <div className="navlinks">
-            {isApprovedMember ? (
+            {loading ? (
+              <span className="muted">Lade Mitgliederbereich …</span>
+            ) : isApprovedMember ? (
               <>
                 <a href="#training">
                   <CalendarDays size={16} /> Events
@@ -121,9 +267,14 @@ export default async function Home() {
                   <Gift size={16} /> Member Benefits
                 </Link>
                 {isAdmin && <Link href="/admin">Adminbereich</Link>}
-                <Link href="/logout">
-                  <LogOut size={16} /> Abmelden
-                </Link>
+                <button
+                  className="btn"
+                  onClick={handleLogout}
+                  disabled={loggingOut}
+                >
+                  <LogOut size={16} />
+                  {loggingOut ? 'Abmelden …' : 'Abmelden'}
+                </button>
               </>
             ) : (
               <>
@@ -172,7 +323,9 @@ export default async function Home() {
           </p>
 
           <div className="actions">
-            {isApprovedMember ? (
+            {loading ? (
+              <span className="muted">Prüfe deinen Zugang …</span>
+            ) : isApprovedMember ? (
               <>
                 <a className="btn primary" href="#training">
                   Termine entdecken <ArrowUpRight size={17} />
@@ -197,48 +350,12 @@ export default async function Home() {
           </div>
         </section>
 
-        {!isApprovedMember ? (
+        {loading ? (
           <section className="container section">
-            <div className="card">
-              <Users size={30} color="var(--cyan)" />
-              <h2>Dein Mitgliederbereich</h2>
-
-              {profileError ? (
-                <p className="muted">
-                  Dein Mitgliederstatus konnte gerade nicht geprüft
-                  werden. Bitte lade die Seite erneut oder melde dich
-                  noch einmal an.
-                </p>
-              ) : signedIn ? (
-                <>
-                  <p className="muted">
-                    Dein Konto ist noch nicht für den Mitgliederbereich
-                    freigeschaltet. Nach der Prüfung durch den Verein
-                    erhältst du Zugriff auf Termine, Trainings und News.
-                  </p>
-                  <Link className="btn" href="/login">
-                    Status prüfen
-                  </Link>
-                </>
-              ) : (
-                <>
-                  <p className="muted">
-                    Melde dich mit deinem freigeschalteten Mitgliedskonto
-                    an, um Vereinstermine, Trainings, News und
-                    Mitgliederangebote zu sehen.
-                  </p>
-                  <div className="actions">
-                    <Link className="btn primary" href="/login">
-                      Jetzt anmelden
-                    </Link>
-                    <Link className="btn" href="/mitglied-werden">
-                      Mitglied werden
-                    </Link>
-                  </div>
-                </>
-              )}
-            </div>
+            <div className="empty">Dein Mitgliederbereich wird geladen …</div>
           </section>
+        ) : !isApprovedMember ? (
+          memberArea
         ) : (
           <>
             <section id="training" className="container section">
@@ -271,17 +388,13 @@ export default async function Home() {
                           }}
                         />
                       )}
-
                       <span className="tag">
                         {event.category || 'Vereinstermin'}
                       </span>
-                      <p className="date">
-                        {dateLabel(event.starts_at)}
-                      </p>
+                      <p className="date">{dateLabel(event.starts_at)}</p>
                       <h3>{event.title}</h3>
                       <p className="muted">
-                        {event.description ||
-                          'Weitere Informationen folgen.'}
+                        {event.description || 'Weitere Informationen folgen.'}
                       </p>
                       {event.location && (
                         <p className="small">📍 {event.location}</p>
@@ -291,28 +404,24 @@ export default async function Home() {
                 </div>
               ) : (
                 <div className="empty">
-                  Aktuell sind keine veröffentlichten Vereinstermine
-                  vorhanden.
+                  Aktuell sind keine veröffentlichten Vereinstermine vorhanden.
+                  Falls Termine angelegt sind, prüfe bitte deren
+                  Veröffentlichungsstatus und die Supabase-RLS-Regeln.
                 </div>
               )}
             </section>
 
-            <section
-              id="training-anmeldung"
-              className="container section"
-            >
+            <section id="training-anmeldung" className="container section">
               <div className="sectionhead">
                 <div>
                   <p className="eyebrow">Gemeinsam am Court</p>
                   <h2>Trainingsanmeldung</h2>
                   <p className="muted">
-                    Entdecke die nächsten Trainings und sichere dir
-                    deinen Platz. Bei ausgebuchten Trainings ist eine
-                    Warteliste möglich.
+                    Entdecke die nächsten Trainings und sichere dir deinen
+                    Platz. Bei ausgebuchten Trainings ist eine Warteliste möglich.
                   </p>
                 </div>
               </div>
-
               <TrainingList />
             </section>
 
@@ -343,12 +452,10 @@ export default async function Home() {
                           }}
                         />
                       )}
-
                       <span className="tag">News</span>
                       <h3>{item.title}</h3>
                       <p className="muted">
-                        {item.description ||
-                          'Weitere Informationen folgen.'}
+                        {item.description || 'Weitere Informationen folgen.'}
                       </p>
                     </article>
                   ))}
@@ -375,8 +482,7 @@ export default async function Home() {
                   <Trophy color="var(--pink)" size={28} />
                   <h3>Turniere &amp; Meisterschaften</h3>
                   <p className="muted">
-                    Spiele mit, sammle Erfahrung und vertrete unseren
-                    Verein.
+                    Spiele mit, sammle Erfahrung und vertrete unseren Verein.
                   </p>
                 </article>
 
@@ -384,8 +490,8 @@ export default async function Home() {
                   <Images color="#b78aff" size={28} />
                   <h3>Erinnerungen teilen</h3>
                   <p className="muted">
-                    Fotos und Highlights unserer Trainings und Events
-                    an einem Ort.
+                    Fotos und Highlights unserer Trainings und Events an
+                    einem Ort.
                   </p>
                 </article>
 
@@ -401,8 +507,8 @@ export default async function Home() {
                   <Gift color="var(--cyan)" size={28} />
                   <h3>Member Benefits</h3>
                   <p className="muted">
-                    Exklusive Angebote, Sponsorvorteile und Rabattcodes
-                    für unsere Mitglieder.
+                    Exklusive Angebote, Sponsorvorteile und Rabattcodes für
+                    unsere Mitglieder.
                   </p>
                   <span className="btn">
                     Angebote entdecken <ArrowUpRight size={17} />
@@ -427,10 +533,7 @@ export default async function Home() {
                 >
                   <Instagram size={17} /> Instagram
                 </a>
-                <a
-                  className="btn"
-                  href="mailto:thepadelclubbing@gmail.com"
-                >
+                <a className="btn" href="mailto:thepadelclubbing@gmail.com">
                   thepadelclubbing@gmail.com
                 </a>
               </div>
@@ -442,12 +545,10 @@ export default async function Home() {
       <footer className="footer">
         <div className="container">
           © {new Date().getFullYear()} Padelclubbing ·{' '}
-          <a href="https://www.padelclubbing.at/">
-            padelclubbing.at
-          </a>
+          <a href="https://www.padelclubbing.at/">padelclubbing.at</a>
           <p>
-            Hinweis: Impressum und Datenschutzerklärung sollten über
-            separate Seiten erreichbar sein.
+            Hinweis: Impressum und Datenschutzerklärung sollten über separate
+            Seiten erreichbar sein.
           </p>
         </div>
       </footer>
