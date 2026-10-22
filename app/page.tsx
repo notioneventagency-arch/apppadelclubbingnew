@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Trophy, Images, Users, ArrowUpRight, Instagram } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import TrainingList from '@/components/training-list';
 
 type Entry = {
   id: string;
