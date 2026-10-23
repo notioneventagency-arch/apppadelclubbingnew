@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '@/lib/supabase';
-import { CalendarPlus, RefreshCw, Trash2, Upload, Users } from 'lucide-react';
+import { CalendarPlus, RefreshCw, Trash2, Users } from 'lucide-react';
 
 type Training = {
   id: string;
@@ -40,75 +40,156 @@ export default function TrainingManagement() {
 
   const load = useCallback(async () => {
     if (!supabase) return;
+
     const { data, error } = await supabase
       .from('trainings')
       .select('*')
       .order('starts_at', { ascending: true });
+
     if (error) {
       setMessage('Trainings konnten nicht geladen werden: ' + error.message);
       return;
     }
+
     const rows = (data || []) as Training[];
     setTrainings(rows);
 
     const next: Record<string, Registration[]> = {};
+
     for (const training of rows) {
       const { data: regs, error: regError } = await supabase
         .from('training_registrations')
         .select('id,user_id,status,created_at')
         .eq('training_id', training.id)
         .order('created_at', { ascending: true });
+
       if (regError) {
         setMessage('Anmeldungen konnten nicht geladen werden: ' + regError.message);
         continue;
       }
+
       next[training.id] = (regs || []) as Registration[];
     }
+
     setRegistrations(next);
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function sendPush(titleText: string, bodyText: string, url: string) {
+    if (!supabase) return 'Supabase ist nicht verfügbar.';
+
+    const { data: { session }, error: sessionError } =
+      await supabase.auth.getSession();
+
+    if (sessionError || !session?.access_token) {
+      return 'Push nicht gesendet: Admin-Sitzung nicht gefunden.';
+    }
+
+    try {
+      const response = await fetch('/api/push/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          title: titleText,
+          body: bodyText,
+          url,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        return 'Training gespeichert, aber Push fehlgeschlagen: ' +
+          (result.error || 'Unbekannter Fehler');
+      }
+
+      return `Push versendet: ${result.sent ?? 0} erfolgreich, ${result.failed ?? 0} fehlgeschlagen.`;
+    } catch {
+      return 'Training gespeichert, aber Push-Versand nicht erreichbar.';
+    }
+  }
 
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
     if (!supabase) return;
+
     if (!startsAt) {
       setMessage('Bitte Datum und Uhrzeit eintragen.');
       return;
     }
+
     setBusy(true);
     setMessage('');
+
     let imageUrl: string | null = null;
 
     if (imageFile) {
       const safeName = imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
       const path = `${Date.now()}-${safeName}`;
+
       const { error: uploadError } = await supabase.storage
         .from('training-images')
-        .upload(path, imageFile, { upsert: false, contentType: imageFile.type });
+        .upload(path, imageFile, {
+          upsert: false,
+          contentType: imageFile.type,
+        });
+
       if (uploadError) {
         setBusy(false);
         setMessage('Bild-Upload fehlgeschlagen: ' + uploadError.message);
         return;
       }
-      const { data } = supabase.storage.from('training-images').getPublicUrl(path);
+
+      const { data } = supabase.storage
+        .from('training-images')
+        .getPublicUrl(path);
+
       imageUrl = data.publicUrl;
     }
 
-    const { error } = await supabase.from('trainings').insert({
-      title: title.trim(),
-      description: description.trim(),
-      location: location.trim(),
-      starts_at: new Date(startsAt).toISOString(),
-      max_participants: Number(maxParticipants),
-      image_url: imageUrl,
-      published,
-    });
+    const { data: insertedTraining, error } = await supabase
+      .from('trainings')
+      .insert({
+        title: title.trim(),
+        description: description.trim(),
+        location: location.trim(),
+        starts_at: new Date(startsAt).toISOString(),
+        max_participants: Number(maxParticipants),
+        image_url: imageUrl,
+        published,
+      })
+      .select('id,title,description,location,starts_at,published')
+      .single();
 
-    setBusy(false);
-    if (error) {
-      setMessage('Training konnte nicht gespeichert werden: ' + error.message);
+    if (error || !insertedTraining) {
+      setBusy(false);
+      setMessage('Training konnte nicht gespeichert werden: ' + (error?.message || 'Keine Daten zurückgegeben.'));
       return;
+    }
+
+    let pushMessage = '';
+
+    if (published) {
+      const formattedDate = new Date(insertedTraining.starts_at).toLocaleString('de-AT', {
+        weekday: 'short',
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      pushMessage = await sendPush(
+        'Neues Training: ' + insertedTraining.title,
+        `${formattedDate} Uhr · ${insertedTraining.location}`,
+        '/'
+      );
     }
 
     setTitle('');
@@ -117,32 +198,85 @@ export default function TrainingManagement() {
     setMaxParticipants('8');
     setPublished(false);
     setImageFile(null);
+
     const fileInput = document.getElementById('training-image') as HTMLInputElement | null;
     if (fileInput) fileInput.value = '';
-    setMessage('Training gespeichert.');
+
+    setBusy(false);
+    setMessage(
+      published
+        ? `Training veröffentlicht. ${pushMessage}`
+        : 'Training gespeichert. Es ist noch ein Entwurf.'
+    );
+
     await load();
   }
 
   async function remove(id: string) {
-    if (!supabase || !confirm('Training wirklich löschen? Die zugehörigen Anmeldungen werden ebenfalls gelöscht.')) return;
-    const { error } = await supabase.from('trainings').delete().eq('id', id);
+    if (
+      !supabase ||
+      !confirm('Training wirklich löschen? Die zugehörigen Anmeldungen werden ebenfalls gelöscht.')
+    ) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('trainings')
+      .delete()
+      .eq('id', id);
+
     setMessage(error ? 'Löschen fehlgeschlagen: ' + error.message : 'Training gelöscht.');
     await load();
   }
 
   async function setPublishedState(training: Training, nextPublished: boolean) {
     if (!supabase) return;
-    const { error } = await supabase.from('trainings')
+
+    const { error } = await supabase
+      .from('trainings')
       .update({ published: nextPublished })
       .eq('id', training.id);
-    setMessage(error ? 'Status konnte nicht geändert werden: ' + error.message : (nextPublished ? 'Training veröffentlicht.' : 'Training als Entwurf gespeichert.'));
+
+    if (error) {
+      setMessage('Status konnte nicht geändert werden: ' + error.message);
+      return;
+    }
+
+    if (nextPublished && !training.published) {
+      const formattedDate = new Date(training.starts_at).toLocaleString('de-AT', {
+        weekday: 'short',
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      const pushMessage = await sendPush(
+        'Neues Training: ' + training.title,
+        `${formattedDate} Uhr · ${training.location}`,
+        '/'
+      );
+
+      setMessage('Training veröffentlicht. ' + pushMessage);
+    } else {
+      setMessage(
+        nextPublished
+          ? 'Training ist bereits veröffentlicht.'
+          : 'Training als Entwurf gespeichert.'
+      );
+    }
+
     await load();
   }
 
   const dateLabel = (value: string) =>
     new Date(value).toLocaleString('de-AT', {
-      weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit',
+      weekday: 'short',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     });
 
   return (
@@ -153,6 +287,7 @@ export default function TrainingManagement() {
           <h2>Trainings erstellen</h2>
           <p className="muted">Lege die konkreten Termine alle 14 Tage nach Bedarf an.</p>
         </div>
+
         <button type="button" className="btn" onClick={() => void load()}>
           <RefreshCw size={15} /> Aktualisieren
         </button>
@@ -163,33 +298,79 @@ export default function TrainingManagement() {
       <form className="form card" onSubmit={save}>
         <div className="field">
           <label htmlFor="training-title">Titel</label>
-          <input id="training-title" required value={title} onChange={e => setTitle(e.target.value)} placeholder="z. B. Padelclubbing Training" />
+          <input
+            id="training-title"
+            required
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder="z. B. Padelclubbing Training"
+          />
         </div>
+
         <div className="field">
           <label htmlFor="training-description">Beschreibung</label>
-          <textarea id="training-description" value={description} onChange={e => setDescription(e.target.value)} placeholder="Niveau, Ablauf, Treffpunkt …" />
+          <textarea
+            id="training-description"
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="Niveau, Ablauf, Treffpunkt …"
+          />
         </div>
+
         <div className="field">
           <label htmlFor="training-location">Ort</label>
-          <input id="training-location" required value={location} onChange={e => setLocation(e.target.value)} />
+          <input
+            id="training-location"
+            required
+            value={location}
+            onChange={e => setLocation(e.target.value)}
+          />
         </div>
+
         <div className="field">
           <label htmlFor="training-starts">Datum und Uhrzeit</label>
-          <input id="training-starts" required type="datetime-local" value={startsAt} onChange={e => setStartsAt(e.target.value)} />
+          <input
+            id="training-starts"
+            required
+            type="datetime-local"
+            value={startsAt}
+            onChange={e => setStartsAt(e.target.value)}
+          />
         </div>
+
         <div className="field">
           <label htmlFor="training-capacity">Maximale Teilnehmerzahl</label>
-          <input id="training-capacity" required type="number" min="1" max="200" value={maxParticipants} onChange={e => setMaxParticipants(e.target.value)} />
+          <input
+            id="training-capacity"
+            required
+            type="number"
+            min="1"
+            max="200"
+            value={maxParticipants}
+            onChange={e => setMaxParticipants(e.target.value)}
+          />
         </div>
+
         <div className="field">
           <label htmlFor="training-image">Titelbild (optional)</label>
-          <input id="training-image" type="file" accept="image/*" onChange={e => setImageFile(e.target.files?.[0] || null)} />
+          <input
+            id="training-image"
+            type="file"
+            accept="image/*"
+            onChange={e => setImageFile(e.target.files?.[0] || null)}
+          />
           <span className="small">Bild wird im Supabase-Bucket „training-images“ gespeichert.</span>
         </div>
+
         <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={published}
+            onChange={e => setPublished(e.target.checked)}
+          />
           Direkt auf der Website veröffentlichen
         </label>
+
         <button className="btn primary" disabled={busy}>
           <CalendarPlus size={17} /> {busy ? 'Speichert …' : 'Training speichern'}
         </button>
@@ -198,46 +379,88 @@ export default function TrainingManagement() {
       <div className="sectionhead" style={{ marginTop: 28 }}>
         <div><h2>Alle Trainings</h2></div>
       </div>
+
       <div className="adminlist">
         {trainings.length === 0 ? (
           <div className="empty">Noch keine Trainings angelegt.</div>
-        ) : trainings.map(training => {
-          const regs = registrations[training.id] || [];
-          const confirmed = regs.filter(r => r.status === 'registered');
-          const waiting = regs.filter(r => r.status === 'waitlist');
-          return (
-            <article className="adminitem" key={training.id}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <strong>{training.title}</strong>
-                <p>{dateLabel(training.starts_at)} · {training.location}</p>
-                <p>{confirmed.length}/{training.max_participants} Plätze belegt · {waiting.length} auf Warteliste · {training.published ? 'Veröffentlicht' : 'Entwurf'}</p>
-                {training.image_url && <img src={training.image_url} alt="" style={{ width: 180, maxHeight: 110, objectFit: 'cover', borderRadius: 8 }} />}
-                <div className="actions" style={{ marginTop: 8 }}>
-                  <button type="button" className="btn" onClick={() => void setPublishedState(training, !training.published)}>
-                    {training.published ? 'Als Entwurf setzen' : 'Veröffentlichen'}
-                  </button>
-                </div>
-                <details style={{ marginTop: 10 }}>
-                  <summary><Users size={15} style={{ display: 'inline', verticalAlign: 'middle' }} /> Teilnehmerliste ({regs.length})</summary>
-                  {regs.length === 0 ? <p className="muted">Noch keine Anmeldungen.</p> : (
-                    <ul>
-                      {regs.map(reg => (
-                        <li key={reg.id}>
-                          {reg.user_id.slice(0, 8)}… — {reg.status === 'registered' ? 'Angemeldet' : reg.status === 'waitlist' ? 'Warteliste' : 'Storniert'}
-                        </li>
-                      ))}
-                    </ul>
+        ) : (
+          trainings.map(training => {
+            const regs = registrations[training.id] || [];
+            const confirmed = regs.filter(r => r.status === 'registered');
+            const waiting = regs.filter(r => r.status === 'waitlist');
+
+            return (
+              <article className="adminitem" key={training.id}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <strong>{training.title}</strong>
+                  <p>{dateLabel(training.starts_at)} · {training.location}</p>
+                  <p>
+                    {confirmed.length}/{training.max_participants} Plätze belegt ·{' '}
+                    {waiting.length} auf Warteliste ·{' '}
+                    {training.published ? 'Veröffentlicht' : 'Entwurf'}
+                  </p>
+
+                  {training.image_url && (
+                    <img
+                      src={training.image_url}
+                      alt=""
+                      style={{
+                        width: 180,
+                        maxHeight: 110,
+                        objectFit: 'cover',
+                        borderRadius: 8,
+                      }}
+                    />
                   )}
-                </details>
-              </div>
-              <button type="button" className="btn" aria-label="Training löschen" onClick={() => void remove(training.id)}>
-                <Trash2 size={16} />
-              </button>
-            </article>
-          );
-        })}
+
+                  <div className="actions" style={{ marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => void setPublishedState(training, !training.published)}
+                    >
+                      {training.published ? 'Als Entwurf setzen' : 'Veröffentlichen'}
+                    </button>
+                  </div>
+
+                  <details style={{ marginTop: 10 }}>
+                    <summary>
+                      <Users size={15} style={{ display: 'inline', verticalAlign: 'middle' }} />{' '}
+                      Teilnehmerliste ({regs.length})
+                    </summary>
+
+                    {regs.length === 0 ? (
+                      <p className="muted">Noch keine Anmeldungen.</p>
+                    ) : (
+                      <ul>
+                        {regs.map(reg => (
+                          <li key={reg.id}>
+                            {reg.user_id.slice(0, 8)}… —{' '}
+                            {reg.status === 'registered'
+                              ? 'Angemeldet'
+                              : reg.status === 'waitlist'
+                                ? 'Warteliste'
+                                : 'Storniert'}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </details>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn"
+                  aria-label="Training löschen"
+                  onClick={() => void remove(training.id)}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </article>
+            );
+          })
+        )}
       </div>
     </section>
   );
 }
-
