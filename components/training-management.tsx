@@ -39,7 +39,10 @@ export default function TrainingManagement() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    if (!supabase) return;
+    if (!supabase) {
+      setMessage('Die Verbindung zur Datenbank ist nicht verfügbar.');
+      return;
+    }
 
     const { data, error } = await supabase
       .from('trainings')
@@ -64,7 +67,9 @@ export default function TrainingManagement() {
         .order('created_at', { ascending: true });
 
       if (regError) {
-        setMessage('Anmeldungen konnten nicht geladen werden: ' + regError.message);
+        setMessage(
+          'Anmeldungen konnten nicht geladen werden: ' + regError.message
+        );
         continue;
       }
 
@@ -78,11 +83,17 @@ export default function TrainingManagement() {
     void load();
   }, [load]);
 
-  async function sendPush(titleText: string, bodyText: string, url: string) {
+  async function sendPush(
+    titleText: string,
+    bodyText: string,
+    url: string
+  ) {
     if (!supabase) return 'Supabase ist nicht verfügbar.';
 
-    const { data: { session }, error: sessionError } =
-      await supabase.auth.getSession();
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
 
     if (sessionError || !session?.access_token) {
       return 'Push nicht gesendet: Admin-Sitzung nicht gefunden.';
@@ -105,8 +116,10 @@ export default function TrainingManagement() {
       const result = await response.json();
 
       if (!response.ok) {
-        return 'Training gespeichert, aber Push fehlgeschlagen: ' +
-          (result.error || 'Unbekannter Fehler');
+        return (
+          'Training gespeichert, aber Push fehlgeschlagen: ' +
+          (result.error || 'Unbekannter Fehler')
+        );
       }
 
       return `Push versendet: ${result.sent ?? 0} erfolgreich, ${result.failed ?? 0} fehlgeschlagen.`;
@@ -115,13 +128,42 @@ export default function TrainingManagement() {
     }
   }
 
+  function getTrainingCalendarUrl(trainingId: string) {
+    return `/kalender?type=training&id=${encodeURIComponent(trainingId)}`;
+  }
+
+  function formatTrainingDate(value: string) {
+    return new Date(value).toLocaleString('de-AT', {
+      weekday: 'short',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!supabase) return;
+    if (!supabase) {
+      setMessage('Die Verbindung zur Datenbank ist nicht verfügbar.');
+      return;
+    }
 
     if (!startsAt) {
       setMessage('Bitte Datum und Uhrzeit eintragen.');
+      return;
+    }
+
+    const participantLimit = Number(maxParticipants);
+
+    if (
+      !Number.isInteger(participantLimit) ||
+      participantLimit < 1 ||
+      participantLimit > 200
+    ) {
+      setMessage('Die Teilnehmerzahl muss zwischen 1 und 200 liegen.');
       return;
     }
 
@@ -161,7 +203,7 @@ export default function TrainingManagement() {
         description: description.trim(),
         location: location.trim(),
         starts_at: new Date(startsAt).toISOString(),
-        max_participants: Number(maxParticipants),
+        max_participants: participantLimit,
         image_url: imageUrl,
         published,
       })
@@ -170,25 +212,22 @@ export default function TrainingManagement() {
 
     if (error || !insertedTraining) {
       setBusy(false);
-      setMessage('Training konnte nicht gespeichert werden: ' + (error?.message || 'Keine Daten zurückgegeben.'));
+      setMessage(
+        'Training konnte nicht gespeichert werden: ' +
+          (error?.message || 'Keine Daten zurückgegeben.')
+      );
       return;
     }
 
     let pushMessage = '';
 
     if (published) {
-      const formattedDate = new Date(insertedTraining.starts_at).toLocaleString('de-AT', {
-        weekday: 'short',
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
+      const formattedDate = formatTrainingDate(insertedTraining.starts_at);
 
       pushMessage = await sendPush(
         'Neues Training: ' + insertedTraining.title,
-        `${formattedDate} Uhr · ${insertedTraining.location}`,
-        '/'
+        `${formattedDate} · ${insertedTraining.location}`,
+        getTrainingCalendarUrl(insertedTraining.id)
       );
     }
 
@@ -199,10 +238,14 @@ export default function TrainingManagement() {
     setPublished(false);
     setImageFile(null);
 
-    const fileInput = document.getElementById('training-image') as HTMLInputElement | null;
+    const fileInput = document.getElementById(
+      'training-image'
+    ) as HTMLInputElement | null;
+
     if (fileInput) fileInput.value = '';
 
     setBusy(false);
+
     setMessage(
       published
         ? `Training veröffentlicht. ${pushMessage}`
@@ -215,7 +258,9 @@ export default function TrainingManagement() {
   async function remove(id: string) {
     if (
       !supabase ||
-      !confirm('Training wirklich löschen? Die zugehörigen Anmeldungen werden ebenfalls gelöscht.')
+      !confirm(
+        'Training wirklich löschen? Die zugehörigen Anmeldungen werden ebenfalls gelöscht.'
+      )
     ) {
       return;
     }
@@ -225,11 +270,19 @@ export default function TrainingManagement() {
       .delete()
       .eq('id', id);
 
-    setMessage(error ? 'Löschen fehlgeschlagen: ' + error.message : 'Training gelöscht.');
+    setMessage(
+      error
+        ? 'Löschen fehlgeschlagen: ' + error.message
+        : 'Training gelöscht.'
+    );
+
     await load();
   }
 
-  async function setPublishedState(training: Training, nextPublished: boolean) {
+  async function setPublishedState(
+    training: Training,
+    nextPublished: boolean
+  ) {
     if (!supabase) return;
 
     const { error } = await supabase
@@ -243,18 +296,12 @@ export default function TrainingManagement() {
     }
 
     if (nextPublished && !training.published) {
-      const formattedDate = new Date(training.starts_at).toLocaleString('de-AT', {
-        weekday: 'short',
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
+      const formattedDate = formatTrainingDate(training.starts_at);
 
       const pushMessage = await sendPush(
         'Neues Training: ' + training.title,
-        `${formattedDate} Uhr · ${training.location}`,
-        '/'
+        `${formattedDate} · ${training.location}`,
+        getTrainingCalendarUrl(training.id)
       );
 
       setMessage('Training veröffentlicht. ' + pushMessage);
@@ -269,31 +316,31 @@ export default function TrainingManagement() {
     await load();
   }
 
-  const dateLabel = (value: string) =>
-    new Date(value).toLocaleString('de-AT', {
-      weekday: 'short',
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-
   return (
     <section className="section" id="training-management">
       <div className="sectionhead">
         <div>
           <p className="eyebrow">Trainingsverwaltung</p>
           <h2>Trainings erstellen</h2>
-          <p className="muted">Lege die konkreten Termine alle 14 Tage nach Bedarf an.</p>
+          <p className="muted">
+            Lege die konkreten Termine alle 14 Tage nach Bedarf an.
+          </p>
         </div>
 
-        <button type="button" className="btn" onClick={() => void load()}>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void load()}
+        >
           <RefreshCw size={15} /> Aktualisieren
         </button>
       </div>
 
-      {message && <p className="success" role="status">{message}</p>}
+      {message && (
+        <p className="success" role="status">
+          {message}
+        </p>
+      )}
 
       <form className="form card" onSubmit={save}>
         <div className="field">
@@ -302,7 +349,7 @@ export default function TrainingManagement() {
             id="training-title"
             required
             value={title}
-            onChange={e => setTitle(e.target.value)}
+            onChange={(e) => setTitle(e.target.value)}
             placeholder="z. B. Padelclubbing Training"
           />
         </div>
@@ -312,7 +359,7 @@ export default function TrainingManagement() {
           <textarea
             id="training-description"
             value={description}
-            onChange={e => setDescription(e.target.value)}
+            onChange={(e) => setDescription(e.target.value)}
             placeholder="Niveau, Ablauf, Treffpunkt …"
           />
         </div>
@@ -323,7 +370,7 @@ export default function TrainingManagement() {
             id="training-location"
             required
             value={location}
-            onChange={e => setLocation(e.target.value)}
+            onChange={(e) => setLocation(e.target.value)}
           />
         </div>
 
@@ -334,12 +381,14 @@ export default function TrainingManagement() {
             required
             type="datetime-local"
             value={startsAt}
-            onChange={e => setStartsAt(e.target.value)}
+            onChange={(e) => setStartsAt(e.target.value)}
           />
         </div>
 
         <div className="field">
-          <label htmlFor="training-capacity">Maximale Teilnehmerzahl</label>
+          <label htmlFor="training-capacity">
+            Maximale Teilnehmerzahl
+          </label>
           <input
             id="training-capacity"
             required
@@ -347,7 +396,7 @@ export default function TrainingManagement() {
             min="1"
             max="200"
             value={maxParticipants}
-            onChange={e => setMaxParticipants(e.target.value)}
+            onChange={(e) => setMaxParticipants(e.target.value)}
           />
         </div>
 
@@ -357,46 +406,60 @@ export default function TrainingManagement() {
             id="training-image"
             type="file"
             accept="image/*"
-            onChange={e => setImageFile(e.target.files?.[0] || null)}
+            onChange={(e) => setImageFile(e.target.files?.[0] || null)}
           />
-          <span className="small">Bild wird im Supabase-Bucket „training-images“ gespeichert.</span>
+          <span className="small">
+            Bild wird im Supabase-Bucket „training-images“ gespeichert.
+          </span>
         </div>
 
         <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
             type="checkbox"
             checked={published}
-            onChange={e => setPublished(e.target.checked)}
+            onChange={(e) => setPublished(e.target.checked)}
           />
           Direkt auf der Website veröffentlichen
         </label>
 
         <button className="btn primary" disabled={busy}>
-          <CalendarPlus size={17} /> {busy ? 'Speichert …' : 'Training speichern'}
+          <CalendarPlus size={17} />{' '}
+          {busy ? 'Speichert …' : 'Training speichern'}
         </button>
       </form>
 
       <div className="sectionhead" style={{ marginTop: 28 }}>
-        <div><h2>Alle Trainings</h2></div>
+        <div>
+          <h2>Alle Trainings</h2>
+        </div>
       </div>
 
       <div className="adminlist">
         {trainings.length === 0 ? (
           <div className="empty">Noch keine Trainings angelegt.</div>
         ) : (
-          trainings.map(training => {
+          trainings.map((training) => {
             const regs = registrations[training.id] || [];
-            const confirmed = regs.filter(r => r.status === 'registered');
-            const waiting = regs.filter(r => r.status === 'waitlist');
+            const confirmed = regs.filter(
+              (r) => r.status === 'registered'
+            );
+            const waiting = regs.filter(
+              (r) => r.status === 'waitlist'
+            );
 
             return (
               <article className="adminitem" key={training.id}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <strong>{training.title}</strong>
-                  <p>{dateLabel(training.starts_at)} · {training.location}</p>
+
                   <p>
-                    {confirmed.length}/{training.max_participants} Plätze belegt ·{' '}
-                    {waiting.length} auf Warteliste ·{' '}
+                    {formatTrainingDate(training.starts_at)} ·{' '}
+                    {training.location}
+                  </p>
+
+                  <p>
+                    {confirmed.length}/{training.max_participants} Plätze
+                    belegt · {waiting.length} auf Warteliste ·{' '}
                     {training.published ? 'Veröffentlicht' : 'Entwurf'}
                   </p>
 
@@ -417,15 +480,28 @@ export default function TrainingManagement() {
                     <button
                       type="button"
                       className="btn"
-                      onClick={() => void setPublishedState(training, !training.published)}
+                      onClick={() =>
+                        void setPublishedState(
+                          training,
+                          !training.published
+                        )
+                      }
                     >
-                      {training.published ? 'Als Entwurf setzen' : 'Veröffentlichen'}
+                      {training.published
+                        ? 'Als Entwurf setzen'
+                        : 'Veröffentlichen'}
                     </button>
                   </div>
 
                   <details style={{ marginTop: 10 }}>
                     <summary>
-                      <Users size={15} style={{ display: 'inline', verticalAlign: 'middle' }} />{' '}
+                      <Users
+                        size={15}
+                        style={{
+                          display: 'inline',
+                          verticalAlign: 'middle',
+                        }}
+                      />{' '}
                       Teilnehmerliste ({regs.length})
                     </summary>
 
@@ -433,7 +509,7 @@ export default function TrainingManagement() {
                       <p className="muted">Noch keine Anmeldungen.</p>
                     ) : (
                       <ul>
-                        {regs.map(reg => (
+                        {regs.map((reg) => (
                           <li key={reg.id}>
                             {reg.user_id.slice(0, 8)}… —{' '}
                             {reg.status === 'registered'
