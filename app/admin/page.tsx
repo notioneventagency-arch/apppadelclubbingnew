@@ -62,6 +62,7 @@ export default function Admin() {
   const [imageUrl, setImageUrl] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingWasPublished, setEditingWasPublished] = useState(false);
 
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -140,9 +141,56 @@ export default function Admin() {
     }
   }, [load]);
 
+  async function sendAdminPush(
+    titleText: string,
+    bodyText: string
+  ): Promise<string> {
+    if (!supabase) {
+      return 'Push nicht gesendet: Supabase ist nicht verfügbar.';
+    }
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError || !session?.access_token) {
+      return 'Push nicht gesendet: Admin-Sitzung fehlt.';
+    }
+
+    try {
+      const response = await fetch('/api/push/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          title: titleText,
+          body: bodyText,
+          url: '/',
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        return (
+          'Push fehlgeschlagen: ' +
+          (result.error || 'Unbekannter Fehler')
+        );
+      }
+
+      return `Push-Ergebnis: ${result.sent ?? 0} erfolgreich, ${result.failed ?? 0} fehlgeschlagen.`;
+    } catch {
+      return 'Push-Endpunkt konnte nicht erreicht werden.';
+    }
+  }
+
   function startEdit(table: 'events' | 'news', entry: Entry) {
     setKind(table);
     setEditingId(entry.id);
+    setEditingWasPublished(Boolean(entry.published));
     setTitle(entry.title || '');
     setDescription(entry.description || '');
     setStartsAt(
@@ -161,6 +209,7 @@ export default function Admin() {
 
   function resetForm() {
     setEditingId(null);
+    setEditingWasPublished(false);
     setTitle('');
     setDescription('');
     setStartsAt('');
@@ -227,6 +276,10 @@ export default function Admin() {
         row.category = category || 'Vereinstermin';
       }
 
+      const isNewEntry = !editingId;
+      const shouldSendPush =
+        published && (isNewEntry || !editingWasPublished);
+
       const query = editingId
         ? supabase.from(kind).update(row).eq('id', editingId)
         : supabase.from(kind).insert(row);
@@ -238,10 +291,47 @@ export default function Admin() {
         return;
       }
 
+      let pushResult = '';
+
+      if (shouldSendPush) {
+        const pushTitle =
+          kind === 'events'
+            ? `Neuer Termin: ${title.trim()}`
+            : `PADELCLUBBING News: ${title.trim()}`;
+
+        const eventDetails =
+          kind === 'events'
+            ? [
+                startsAt
+                  ? new Date(startsAt).toLocaleString('de-AT', {
+                      weekday: 'short',
+                      day: '2-digit',
+                      month: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })
+                  : '',
+                location.trim(),
+                category,
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            : '';
+
+        const pushBody =
+          eventDetails ||
+          description.trim() ||
+          'Es gibt Neuigkeiten bei PADELCLUBBING.';
+
+        pushResult = await sendAdminPush(pushTitle, pushBody);
+      }
+
+      const savedMessage = isNewEntry
+        ? 'Eintrag erfolgreich gespeichert.'
+        : 'Änderungen erfolgreich gespeichert.';
+
       setMessage(
-        editingId
-          ? 'Änderungen erfolgreich gespeichert.'
-          : 'Eintrag erfolgreich gespeichert.'
+        savedMessage + (shouldSendPush ? ' ' + pushResult : '')
       );
 
       resetForm();
