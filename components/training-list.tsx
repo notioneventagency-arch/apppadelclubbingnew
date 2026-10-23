@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { CalendarDays, MapPin, Users, Clock3 } from 'lucide-react';
+import { CalendarDays, MapPin, Users } from 'lucide-react';
 
 type Training = {
   id: string;
@@ -24,7 +24,9 @@ type Registration = {
 
 export default function TrainingList() {
   const [trainings, setTrainings] = useState<Training[]>([]);
-  const [myRegistrations, setMyRegistrations] = useState<Record<string, Registration>>({});
+  const [myRegistrations, setMyRegistrations] = useState<
+    Record<string, Registration>
+  >({});
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [userId, setUserId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
@@ -32,26 +34,35 @@ export default function TrainingList() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    if (!supabase) {
-      setMessage('Die Verbindung zum Mitgliederportal ist momentan nicht verfügbar.');
+    const client = supabase;
+
+    if (!client) {
+      setMessage(
+        'Die Verbindung zum Mitgliederportal ist momentan nicht verfügbar.',
+      );
       setLoading(false);
       return;
     }
 
     setLoading(true);
-    const { data: auth } = await supabase.auth.getUser();
+
+    const { data: auth } = await client.auth.getUser();
     const currentUserId = auth.user?.id ?? null;
     setUserId(currentUserId);
 
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from('trainings')
-      .select('id,title,description,location,starts_at,max_participants,image_url,published')
+      .select(
+        'id,title,description,location,starts_at,max_participants,image_url,published',
+      )
       .eq('published', true)
       .gte('starts_at', new Date().toISOString())
       .order('starts_at', { ascending: true });
 
     if (error) {
-      setMessage('Trainings konnten nicht geladen werden. Bitte versuche es später erneut.');
+      setMessage(
+        'Trainings konnten nicht geladen werden. Bitte versuche es später erneut.',
+      );
       setLoading(false);
       return;
     }
@@ -59,33 +70,42 @@ export default function TrainingList() {
     const rows = (data || []) as Training[];
     setTrainings(rows);
 
-    const results = await Promise.all(rows.map(async (training) => {
-      const [countResult, mineResult] = await Promise.all([
-        supabase.rpc('get_training_registration_count', { p_training_id: training.id }),
-        currentUserId
-          ? supabase
-              .from('training_registrations')
-              .select('id,training_id,status')
-              .eq('training_id', training.id)
-              .eq('user_id', currentUserId)
-              .in('status', ['registered', 'waitlist'])
-              .maybeSingle()
-          : Promise.resolve({ data: null, error: null }),
-      ]);
+    const results = await Promise.all(
+      rows.map(async (training) => {
+        const [countResult, mineResult] = await Promise.all([
+          client.rpc('get_training_registration_count', {
+            p_training_id: training.id,
+          }),
+          currentUserId
+            ? client
+                .from('training_registrations')
+                .select('id,training_id,status')
+                .eq('training_id', training.id)
+                .eq('user_id', currentUserId)
+                .in('status', ['registered', 'waitlist'])
+                .maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+        ]);
 
-      return {
-        trainingId: training.id,
-        count: Number(countResult.data || 0),
-        mine: mineResult.data as Registration | null,
-      };
-    }));
+        return {
+          trainingId: training.id,
+          count: Number(countResult.data || 0),
+          mine: mineResult.data as Registration | null,
+        };
+      }),
+    );
 
     const nextCounts: Record<string, number> = {};
     const nextMine: Record<string, Registration> = {};
+
     for (const result of results) {
       nextCounts[result.trainingId] = result.count;
-      if (result.mine) nextMine[result.trainingId] = result.mine;
+
+      if (result.mine) {
+        nextMine[result.trainingId] = result.mine;
+      }
     }
+
     setCounts(nextCounts);
     setMyRegistrations(nextMine);
     setLoading(false);
@@ -96,7 +116,15 @@ export default function TrainingList() {
   }, [load]);
 
   async function register(trainingId: string) {
-    if (!supabase) return;
+    const client = supabase;
+
+    if (!client) {
+      setMessage(
+        'Die Verbindung zum Mitgliederportal ist momentan nicht verfügbar.',
+      );
+      return;
+    }
+
     if (!userId) {
       window.location.href = '/login';
       return;
@@ -104,13 +132,18 @@ export default function TrainingList() {
 
     setBusyId(trainingId);
     setMessage('');
-    const { data, error } = await supabase.rpc('register_for_training', {
+
+    const { data, error } = await client.rpc('register_for_training', {
       p_training_id: trainingId,
     });
+
     setBusyId(null);
 
     if (error) {
-      setMessage(error.message || 'Die Anmeldung ist leider fehlgeschlagen. Bitte versuche es erneut.');
+      setMessage(
+        error.message ||
+          'Die Anmeldung ist leider fehlgeschlagen. Bitte versuche es erneut.',
+      );
       return;
     }
 
@@ -119,24 +152,41 @@ export default function TrainingList() {
         ? 'Du bist auf der Warteliste eingetragen.'
         : 'Du bist für das Training angemeldet.',
     );
+
     await load();
   }
 
   async function cancel(trainingId: string) {
-    if (!supabase) return;
-    setBusyId(trainingId);
-    setMessage('');
-    const { error } = await supabase.rpc('cancel_training_registration', {
-      p_training_id: trainingId,
-    });
-    setBusyId(null);
+    const client = supabase;
 
-    if (error) {
-      setMessage(error.message || 'Die Stornierung ist leider fehlgeschlagen. Bitte versuche es erneut.');
+    if (!client) {
+      setMessage(
+        'Die Verbindung zum Mitgliederportal ist momentan nicht verfügbar.',
+      );
       return;
     }
 
-    setMessage('Deine Anmeldung wurde storniert. Ein Wartelistenplatz kann automatisch nachrücken.');
+    setBusyId(trainingId);
+    setMessage('');
+
+    const { error } = await client.rpc('cancel_training_registration', {
+      p_training_id: trainingId,
+    });
+
+    setBusyId(null);
+
+    if (error) {
+      setMessage(
+        error.message ||
+          'Die Stornierung ist leider fehlgeschlagen. Bitte versuche es erneut.',
+      );
+      return;
+    }
+
+    setMessage(
+      'Deine Anmeldung wurde storniert. Ein Wartelistenplatz kann automatisch nachrücken.',
+    );
+
     await load();
   }
 
@@ -159,67 +209,110 @@ export default function TrainingList() {
       )}
 
       {loading ? (
-        <div className="empty" aria-live="polite">Trainings werden geladen …</div>
+        <div className="empty" aria-live="polite">
+          Trainings werden geladen …
+        </div>
       ) : trainings.length === 0 ? (
-        <div className="empty">Aktuell sind keine Trainings veröffentlicht. Schaut bald wieder vorbei.</div>
+        <div className="empty">
+          Aktuell sind keine Trainings veröffentlicht. Schaut bald wieder vorbei.
+        </div>
       ) : (
         <div className="training-grid">
           {trainings.map((training) => {
             const count = counts[training.id] || 0;
             const mine = myRegistrations[training.id];
-            const max = Math.max(0, Number(training.max_participants) || 0);
+            const max = Math.max(
+              0,
+              Number(training.max_participants) || 0,
+            );
             const full = max > 0 && count >= max;
             const remaining = Math.max(0, max - count);
 
             return (
               <article className="card training-card" key={training.id}>
                 {training.image_url && (
-                  <img className="training-image" src={training.image_url} alt={`Bild: ${training.title}`} loading="lazy" />
+                  <img
+                    className="training-image"
+                    src={training.image_url}
+                    alt={`Bild: ${training.title}`}
+                    loading="lazy"
+                  />
                 )}
 
                 <div className="training-card-body">
                   <div className="training-card-topline">
                     <span className="tag">Training</span>
-                    {full && !mine && <span className="training-full-label">Ausgebucht</span>}
+                    {full && !mine && (
+                      <span className="training-full-label">
+                        Ausgebucht
+                      </span>
+                    )}
                   </div>
 
                   <h3 className="training-title">{training.title}</h3>
-                  <p className="muted training-description">{training.description || 'Weitere Informationen folgen.'}</p>
+
+                  <p className="muted training-description">
+                    {training.description || 'Weitere Informationen folgen.'}
+                  </p>
 
                   <div className="training-details">
                     <p className="training-detail">
                       <CalendarDays size={17} aria-hidden="true" />
                       <span>{dateLabel(training.starts_at)}</span>
                     </p>
+
                     {training.location && (
                       <p className="training-detail">
                         <MapPin size={17} aria-hidden="true" />
                         <span>{training.location}</span>
                       </p>
                     )}
+
                     <p className="training-detail">
                       <Users size={17} aria-hidden="true" />
-                      <span>{count}/{max} Plätze belegt</span>
+                      <span>
+                        {count}/{max} Plätze belegt
+                      </span>
                     </p>
                   </div>
 
-                  <div className="training-availability" aria-label={full ? 'Training ausgebucht' : `${remaining} Plätze frei`}>
-                    <span className={`availability-dot ${full ? 'is-full' : ''}`} />
-                    {full ? 'Ausgebucht · Warteliste möglich' : `${remaining} ${remaining === 1 ? 'Platz' : 'Plätze'} frei`}
+                  <div
+                    className="training-availability"
+                    aria-label={
+                      full
+                        ? 'Training ausgebucht'
+                        : `${remaining} Plätze frei`
+                    }
+                  >
+                    <span
+                      className={`availability-dot ${full ? 'is-full' : ''}`}
+                    />
+                    {full
+                      ? 'Ausgebucht · Warteliste möglich'
+                      : `${remaining} ${remaining === 1 ? 'Platz' : 'Plätze'} frei`}
                   </div>
 
                   <div className="training-action">
                     {mine ? (
                       <>
-                        <p className={`registration-status ${mine.status === 'waitlist' ? 'is-waitlist' : ''}`}>
-                          {mine.status === 'waitlist' ? 'Du stehst auf der Warteliste' : 'Du bist angemeldet'}
+                        <p
+                          className={`registration-status ${
+                            mine.status === 'waitlist' ? 'is-waitlist' : ''
+                          }`}
+                        >
+                          {mine.status === 'waitlist'
+                            ? 'Du stehst auf der Warteliste'
+                            : 'Du bist angemeldet'}
                         </p>
+
                         <button
                           className="btn training-button"
                           disabled={busyId === training.id}
                           onClick={() => void cancel(training.id)}
                         >
-                          {busyId === training.id ? 'Bitte warten …' : 'Anmeldung stornieren'}
+                          {busyId === training.id
+                            ? 'Bitte warten …'
+                            : 'Anmeldung stornieren'}
                         </button>
                       </>
                     ) : (
@@ -228,9 +321,14 @@ export default function TrainingList() {
                         disabled={busyId === training.id}
                         onClick={() => void register(training.id)}
                       >
-                        {busyId === training.id ? 'Anmeldung läuft …' : full ? 'Auf Warteliste anmelden' : 'Jetzt anmelden'}
+                        {busyId === training.id
+                          ? 'Anmeldung läuft …'
+                          : full
+                            ? 'Auf Warteliste anmelden'
+                            : 'Jetzt anmelden'}
                       </button>
                     )}
+
                     {!userId && (
                       <p className="training-login-hint">
                         Für die Anmeldung bitte <Link href="/login">einloggen</Link>.
