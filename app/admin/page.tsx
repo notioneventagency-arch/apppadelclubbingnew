@@ -1,767 +1,917 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase, supabaseReady } from '@/lib/supabase';
+import TrainingManagement from '@/components/training-management';
 import {
-  ChevronLeft,
-  ChevronRight,
+  Plus,
+  Pencil,
+  LogOut,
+  Trash2,
+  RefreshCw,
+  Check,
+  X,
+  Users,
   CalendarDays,
-  MapPin,
 } from 'lucide-react';
 
-type CalendarEntry = {
+type Entry = {
   id: string;
   title: string;
   description: string | null;
-  date: string;
+  starts_at: string | null;
   location: string | null;
-  category: 'Training' | 'Event' | 'News';
-  image_url: string | null;
+  category: string | null;
+  published: boolean;
+  created_at?: string;
+  image_url?: string | null;
+  event_date?: string | null;
 };
 
-type Profile = {
-  role: string;
-  status: string;
+type Member = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  skill_level: string | null;
+  message: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  role: 'member' | 'admin';
+  created_at: string;
 };
 
-type AccessState = 'checking' | 'allowed' | 'denied';
+const STORAGE_BUCKET = 'Padelclubbing';
 
-const monthNames = [
-  'Jänner',
-  'Februar',
-  'März',
-  'April',
-  'Mai',
-  'Juni',
-  'Juli',
-  'August',
-  'September',
-  'Oktober',
-  'November',
-  'Dezember',
-];
-
-function localDateKey(value: string) {
-  const date = new Date(value);
-
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function dateOnlyKey(value: string) {
-  return value.slice(0, 10);
-}
-
-function displayDate(value: string, dateOnly = false) {
-  const date = dateOnly
-    ? new Date(`${dateOnlyKey(value)}T12:00:00`)
-    : new Date(value);
-
-  if (dateOnly) {
-    return date.toLocaleDateString('de-AT', {
-      weekday: 'short',
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-    });
-  }
-
-  return date.toLocaleString('de-AT', {
-    weekday: 'short',
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function entryDateKey(entry: CalendarEntry) {
-  return entry.category === 'News'
-    ? dateOnlyKey(entry.date)
-    : localDateKey(entry.date);
-}
-
-function entryMonthDate(entry: CalendarEntry) {
-  return entry.category === 'News'
-    ? new Date(`${dateOnlyKey(entry.date)}T12:00:00`)
-    : new Date(entry.date);
-}
-
-export default function KalenderPage() {
+export default function Admin() {
   const router = useRouter();
-  const today = new Date();
 
-  const [access, setAccess] = useState<AccessState>('checking');
+  const [user, setUser] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
+  const [checking, setChecking] = useState(true);
 
-  const [month, setMonth] = useState(
-    new Date(today.getFullYear(), today.getMonth(), 1),
-  );
+  const [events, setEvents] = useState<Entry[]>([]);
+  const [news, setNews] = useState<Entry[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
 
-  const [entries, setEntries] = useState<CalendarEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [kind, setKind] = useState<'events' | 'news'>('events');
+
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [startsAt, setStartsAt] = useState('');
+  const [eventDate, setEventDate] = useState('');
+  const [location, setLocation] = useState('');
+  const [category, setCategory] = useState('Training');
+  const [published, setPublished] = useState(true);
+  const [imageUrl, setImageUrl] = useState('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingWasPublished, setEditingWasPublished] = useState(false);
+
   const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const [selectedDay, setSelectedDay] = useState<string | null>(
-    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`,
-  );
-
-  const [highlighted, setHighlighted] = useState<string | null>(null);
-
-  // Prüft die Anmeldung UND den Freigabestatus des Profils.
-  useEffect(() => {
-    if (!supabase || !supabaseReady) {
-      setAccess('denied');
-      router.replace('/#mitgliederzugang');
+  const load = useCallback(async () => {
+    if (!supabase) {
+      setChecking(false);
       return;
     }
-
-    let active = true;
-    let redirecting = false;
-
-    async function checkAccess(userId: string | null) {
-      if (!active) return;
-
-      if (!userId) {
-        setIsAdmin(false);
-        setAccess('denied');
-
-        if (!redirecting) {
-          redirecting = true;
-          router.replace('/#mitgliederzugang');
-        }
-
-        return;
-      }
-
-      const { data: profile, error } = await supabase!
-        .from('profiles')
-        .select('role,status')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (!active) return;
-
-      const memberProfile = profile as Profile | null;
-
-      if (
-        error ||
-        !memberProfile ||
-        memberProfile.status !== 'approved' ||
-        !['member', 'admin'].includes(memberProfile.role)
-      ) {
-        setIsAdmin(false);
-        setAccess('denied');
-
-        if (!redirecting) {
-          redirecting = true;
-          router.replace('/#mitgliederzugang');
-        }
-
-        return;
-      }
-
-      redirecting = false;
-      setIsAdmin(memberProfile.role === 'admin');
-      setAccess('allowed');
-    }
-
-    async function checkCurrentUser() {
-      const { data, error } = await supabase!.auth.getUser();
-
-      if (!active) return;
-
-      if (error || !data.user) {
-        await checkAccess(null);
-      } else {
-        await checkAccess(data.user.id);
-      }
-    }
-
-    void checkCurrentUser();
 
     const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!active) return;
+      data: { user: currentUser },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-      setAccess('checking');
-      setIsAdmin(false);
-
-      const userId = session?.user?.id ?? null;
-
-      // Verzögert die Profilabfrage aus dem Auth-Callback.
-      setTimeout(() => {
-        if (active) void checkAccess(userId);
-      }, 0);
-    });
-
-    return () => {
-      active = false;
-      subscription.unsubscribe();
-    };
-  }, [router]);
-
-  // Kalenderdaten werden erst nach erfolgreicher Freigabe geladen.
-  const load = useCallback(async () => {
-    if (access !== 'allowed') return;
-
-    if (!supabase || !supabaseReady) {
-      setMessage('Die Verbindung zur Datenbank ist nicht verfügbar.');
-      setLoading(false);
+    if (authError || !currentUser) {
+      router.replace('/login');
+      setChecking(false);
       return;
     }
 
-    setLoading(true);
-    setMessage('');
+    setUser(currentUser.email || 'Admin');
 
-    const [trainingResult, eventResult, newsResult] = await Promise.all([
-      supabase
-        .from('trainings')
-        .select('id,title,description,location,starts_at,image_url,published')
-        .eq('published', true)
-        .order('starts_at', { ascending: true }),
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('role, status')
+      .eq('id', currentUser.id)
+      .maybeSingle();
 
-      supabase
-        .from('events')
-        .select(
-          'id,title,description,location,starts_at,category,image_url,published',
-        )
-        .eq('published', true)
-        .order('starts_at', { ascending: true }),
+    if (
+      profileError ||
+      !profile ||
+      profile.role !== 'admin' ||
+      profile.status !== 'approved'
+    ) {
+      setIsAdmin(false);
+      setMessage('Kein Adminzugriff. Bitte mit einem Admin-Konto anmelden.');
+      setChecking(false);
+      return;
+    }
 
-      supabase
-        .from('news')
-        .select('id,title,description,event_date,image_url,published')
-        .eq('published', true)
-        .not('event_date', 'is', null)
-        .order('event_date', { ascending: true }),
+    setIsAdmin(true);
+
+    const [e, n, m] = await Promise.all([
+      supabase.from('events').select('*').order('starts_at', {
+        ascending: true,
+        nullsFirst: false,
+      }),
+      supabase.from('news').select('*').order('created_at', {
+        ascending: false,
+      }),
+      supabase.from('profiles').select('*').order('created_at', {
+        ascending: false,
+      }),
     ]);
 
-    if (trainingResult.error || eventResult.error || newsResult.error) {
-      console.error('Kalender-Ladefehler:', {
-        trainings: trainingResult.error,
-        events: eventResult.error,
-        news: newsResult.error,
-      });
-
+    if (e.error || n.error || m.error) {
       setMessage(
-        'Termine konnten nicht vollständig geladen werden. Bitte Datenbankspalten und Leseberechtigungen prüfen.',
+        'Fehler beim Laden. Bitte Tabellen und Supabase-Berechtigungen prüfen.'
       );
-      setEntries([]);
-      setLoading(false);
+      setChecking(false);
       return;
     }
 
-    const trainings: CalendarEntry[] = (trainingResult.data || [])
-      .filter((x) => x.starts_at)
-      .map((x) => ({
-        id: String(x.id),
-        title: x.title,
-        description: x.description,
-        date: x.starts_at!,
-        location: x.location,
-        category: 'Training',
-        image_url: x.image_url,
-      }));
-
-    const events: CalendarEntry[] = (eventResult.data || [])
-      .filter((x) => x.starts_at)
-      .map((x) => ({
-        id: String(x.id),
-        title: x.title,
-        description: x.description,
-        date: x.starts_at!,
-        location: x.location,
-        category: 'Event',
-        image_url: x.image_url,
-      }));
-
-    const news: CalendarEntry[] = (newsResult.data || [])
-      .filter((x) => x.event_date)
-      .map((x) => ({
-        id: String(x.id),
-        title: x.title,
-        description: x.description,
-        date: dateOnlyKey(x.event_date!),
-        location: null,
-        category: 'News',
-        image_url: x.image_url,
-      }));
-
-    const merged = [...trainings, ...events, ...news].sort(
-      (a, b) =>
-        entryMonthDate(a).getTime() - entryMonthDate(b).getTime(),
-    );
-
-    setEntries(merged);
-
-    // Push-Direktlinks beibehalten:
-    // /kalender?type=training&id=123
-    const params = new URLSearchParams(window.location.search);
-    const type = params.get('type')?.toLowerCase();
-    const id = params.get('id');
-
-    if (type && id) {
-      const expectedCategory =
-        type === 'training'
-          ? 'Training'
-          : type === 'event'
-            ? 'Event'
-            : type === 'news'
-              ? 'News'
-              : null;
-
-      const found = merged.find(
-        (entry) =>
-          entry.id === id &&
-          entry.category === expectedCategory,
-      );
-
-      if (found) {
-        setHighlighted(`${type}:${id}`);
-
-        const targetDate = entryMonthDate(found);
-
-        setMonth(
-          new Date(
-            targetDate.getFullYear(),
-            targetDate.getMonth(),
-            1,
-          ),
-        );
-
-        setSelectedDay(entryDateKey(found));
-      } else {
-        setHighlighted(null);
-        setMessage(
-          'Der verlinkte Termin wurde nicht gefunden. Möglicherweise wurde er gelöscht oder ist nicht veröffentlicht.',
-        );
-      }
-    } else {
-      setHighlighted(null);
-    }
-
-    setLoading(false);
-  }, [access]);
+    setEvents((e.data || []) as Entry[]);
+    setNews((n.data || []) as Entry[]);
+    setMembers((m.data || []) as Member[]);
+    setChecking(false);
+  }, [router]);
 
   useEffect(() => {
-    if (access === 'allowed') {
+    if (supabaseReady) {
       void load();
+    } else {
+      setChecking(false);
     }
-  }, [access, load]);
+  }, [load]);
 
-  const monthEntries = useMemo(
-    () =>
-      entries.filter((entry) => {
-        const date = entryMonthDate(entry);
+  async function sendAdminPush(
+    titleText: string,
+    bodyText: string,
+    url: string
+  ): Promise<string> {
+    if (!supabase) {
+      return 'Push nicht gesendet: Supabase ist nicht verfügbar.';
+    }
 
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError || !session?.access_token) {
+      return 'Push nicht gesendet: Admin-Sitzung fehlt.';
+    }
+
+    try {
+      const response = await fetch('/api/push/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          title: titleText,
+          body: bodyText,
+          url,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
         return (
-          date.getFullYear() === month.getFullYear() &&
-          date.getMonth() === month.getMonth()
+          'Push fehlgeschlagen: ' +
+          (result.error || 'Unbekannter Fehler')
         );
-      }),
-    [entries, month],
-  );
+      }
 
-  const dayEntries = useMemo(
-    () =>
-      monthEntries.filter(
-        (entry) => entryDateKey(entry) === selectedDay,
-      ),
-    [monthEntries, selectedDay],
-  );
+      return `Push-Ergebnis: ${result.sent ?? 0} erfolgreich, ${result.failed ?? 0} fehlgeschlagen.`;
+    } catch {
+      return 'Push-Endpunkt konnte nicht erreicht werden.';
+    }
+  }
 
-  const firstWeekday =
-    (new Date(
-      month.getFullYear(),
-      month.getMonth(),
-      1,
-    ).getDay() + 6) % 7;
+  function startEdit(table: 'events' | 'news', entry: Entry) {
+    setKind(table);
+    setEditingId(entry.id);
+    setEditingWasPublished(Boolean(entry.published));
 
-  const daysInMonth = new Date(
-    month.getFullYear(),
-    month.getMonth() + 1,
-    0,
-  ).getDate();
+    setTitle(entry.title || '');
+    setDescription(entry.description || '');
 
-  const cells = [
-    ...Array(firstWeekday).fill(null),
-    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-  ];
-
-  function moveMonth(amount: number) {
-    const nextMonth = new Date(
-      month.getFullYear(),
-      month.getMonth() + amount,
-      1,
+    setStartsAt(
+      entry.starts_at
+        ? new Date(entry.starts_at).toISOString().slice(0, 16)
+        : ''
     );
 
-    setMonth(nextMonth);
-    setSelectedDay(null);
-    setHighlighted(null);
+    setEventDate(entry.event_date?.slice(0, 10) || '');
+    setLocation(entry.location || '');
+    setCategory(entry.category || 'Training');
+    setPublished(Boolean(entry.published));
+    setImageUrl(entry.image_url || '');
+    setImageFile(null);
+
+    setMessage('Eintrag wird bearbeitet. Änderungen unten speichern.');
+    document.getElementById('new')?.scrollIntoView({ behavior: 'smooth' });
   }
 
-  function dayKey(day: number) {
-    return `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  function resetForm() {
+    setEditingId(null);
+    setEditingWasPublished(false);
+    setTitle('');
+    setDescription('');
+    setStartsAt('');
+    setEventDate('');
+    setLocation('');
+    setCategory('Training');
+    setPublished(true);
+    setImageUrl('');
+    setImageFile(null);
+
+    const fileInput = document.getElementById(
+      'entry-image'
+    ) as HTMLInputElement | null;
+
+    if (fileInput) fileInput.value = '';
   }
 
-  function categoryClass(category: CalendarEntry['category']) {
-    if (category === 'Training') return 'training';
-    if (category === 'Event') return 'event';
-    return 'news';
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    if (!supabase || !isAdmin) {
+      setMessage('Du benötigst Adminrechte, um Inhalte zu speichern.');
+      return;
+    }
+
+    setBusy(true);
+    setMessage('');
+
+    try {
+      let finalImageUrl: string | null = imageUrl || null;
+
+      if (imageFile) {
+        const safeName = imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+        const path = `${Date.now()}-${safeName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(path, imageFile, {
+            upsert: false,
+            contentType: imageFile.type,
+          });
+
+        if (uploadError) {
+          setMessage('Bild-Upload fehlgeschlagen: ' + uploadError.message);
+          return;
+        }
+
+        finalImageUrl = supabase.storage
+          .from(STORAGE_BUCKET)
+          .getPublicUrl(path).data.publicUrl;
+      }
+
+      const row: Record<string, unknown> = {
+        title: title.trim(),
+        description: description.trim() || null,
+        published,
+        image_url: finalImageUrl,
+      };
+
+      if (kind === 'events') {
+        row.starts_at = startsAt
+          ? new Date(startsAt).toISOString()
+          : null;
+        row.location = location.trim() || null;
+        row.category = category || 'Vereinstermin';
+      }
+
+      if (kind === 'news') {
+        row.event_date = eventDate || null;
+      }
+
+      const isNewEntry = !editingId;
+      const shouldSendPush =
+        published && (isNewEntry || !editingWasPublished);
+
+      let savedId = editingId || '';
+
+      if (editingId) {
+        const { data, error } = await supabase
+          .from(kind)
+          .update(row)
+          .eq('id', editingId)
+          .select('id')
+          .single();
+
+        if (error) {
+          setMessage('Fehler: ' + error.message);
+          return;
+        }
+
+        savedId = data.id;
+      } else {
+        const { data, error } = await supabase
+          .from(kind)
+          .insert(row)
+          .select('id')
+          .single();
+
+        if (error) {
+          setMessage('Fehler: ' + error.message);
+          return;
+        }
+
+        savedId = data.id;
+      }
+
+      let pushResult = '';
+
+      if (shouldSendPush) {
+        const pushTitle =
+          kind === 'events'
+            ? `Neuer Termin: ${title.trim()}`
+            : `PADELCLUBBING News: ${title.trim()}`;
+
+        const eventDetails =
+          kind === 'events'
+            ? [
+                startsAt
+                  ? new Date(startsAt).toLocaleString('de-AT', {
+                      weekday: 'short',
+                      day: '2-digit',
+                      month: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })
+                  : '',
+                location.trim(),
+                category,
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            : eventDate
+              ? `Kalendertermin: ${new Date(
+                  `${eventDate}T12:00:00`
+                ).toLocaleDateString('de-AT')}`
+              : '';
+
+        const pushBody =
+          eventDetails ||
+          description.trim() ||
+          'Es gibt Neuigkeiten bei PADELCLUBBING.';
+
+        const pushUrl =
+          kind === 'events'
+            ? `/kalender?type=event&id=${encodeURIComponent(savedId)}`
+            : eventDate
+              ? `/kalender?type=news&id=${encodeURIComponent(savedId)}`
+              : '/';
+
+        pushResult = await sendAdminPush(pushTitle, pushBody, pushUrl);
+      }
+
+      const savedMessage = isNewEntry
+        ? 'Eintrag erfolgreich gespeichert.'
+        : 'Änderungen erfolgreich gespeichert.';
+
+      setMessage(
+        savedMessage + (shouldSendPush ? ' ' + pushResult : '')
+      );
+
+      resetForm();
+      await load();
+    } catch (error) {
+      setMessage(
+        'Unerwarteter Fehler: ' +
+          (error instanceof Error ? error.message : 'Unbekannter Fehler')
+      );
+    } finally {
+      setBusy(false);
+    }
   }
 
-  // Bis zur bestätigten Zugriffsentscheidung keine Kalenderdaten anzeigen.
-  if (access !== 'allowed') {
+  async function remove(table: 'events' | 'news', id: string) {
+    if (!supabase || !isAdmin) return;
+    if (!confirm('Diesen Eintrag wirklich löschen?')) return;
+
+    const { error } = await supabase.from(table).delete().eq('id', id);
+
+    setMessage(error ? 'Fehler: ' + error.message : 'Eintrag gelöscht.');
+
+    if (!error) {
+      await load();
+    }
+  }
+
+  async function updateMemberStatus(
+    id: string,
+    status: 'approved' | 'rejected'
+  ) {
+    if (!supabase || !isAdmin || busy) return;
+
+    const member = members.find((m) => m.id === id);
+    if (!member) return;
+
+    const action = status === 'approved' ? 'freigeben' : 'ablehnen';
+
+    if (
+      !confirm(
+        `Mitgliedsantrag von ${member.first_name} ${member.last_name} ${action}?`
+      )
+    ) {
+      return;
+    }
+
+    setBusy(true);
+    setMessage('');
+
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ status })
+        .eq('id', id)
+        .eq('role', 'member');
+
+      if (error) {
+        setMessage('Fehler bei der Freigabe: ' + error.message);
+        return;
+      }
+
+      setMessage(
+        status === 'approved'
+          ? 'Mitglied erfolgreich freigegeben.'
+          : 'Mitgliedsantrag abgelehnt.'
+      );
+
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function logout() {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+
+    router.replace('/login');
+    router.refresh();
+  }
+
+  if (!supabaseReady) {
     return (
       <main className="container section">
-        <div className="card" style={{ padding: 28, textAlign: 'center' }}>
-          <CalendarDays
-            size={32}
-            style={{ margin: '0 auto 12px', display: 'block' }}
-          />
-          <h1>Mitgliederkalender</h1>
-          <p className="muted">
-            {access === 'checking'
-              ? 'Dein Mitgliederzugang wird überprüft …'
-              : 'Du wirst zum Mitgliederzugang weitergeleitet.'}
-          </p>
-          <Link className="btn" href="/#mitgliederzugang">
-            Zum Mitgliederzugang
-          </Link>
-        </div>
+        <h1>Supabase ist nicht verbunden</h1>
+        <p>Bitte die Supabase-Umgebungsvariablen in Vercel überprüfen.</p>
       </main>
     );
   }
 
+  if (checking) {
+    return (
+      <main className="container section">
+        <h1>Adminbereich</h1>
+        <p>Adminberechtigung wird überprüft …</p>
+      </main>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <main className="container section">
+        <h1>Adminbereich</h1>
+        <p>{message || 'Kein Adminzugriff.'}</p>
+        <Link className="btn" href="/login">
+          Zum Login
+        </Link>
+      </main>
+    );
+  }
+
+  const pendingMembers = members.filter((m) => m.status === 'pending');
+  const processedMembers = members.filter((m) => m.status !== 'pending');
+
   return (
-    <main className="container section">
+    <main className="container">
       <nav className="nav">
         <Link className="brand" href="/">
-          <img src="/padelclubbing-logo.jpg" alt="PADELCLUBBING" />
-          <span>PADELCLUBBING</span>
+          <img src="/padelclubbing-logo.jpg" alt="Logo" />
+          <span>PADELCLUBBING ADMIN</span>
         </Link>
 
         <div className="navlinks">
-          <Link href="/">Startseite</Link>
-          {isAdmin && <Link href="/admin">Adminbereich</Link>}
+          <Link href="/kalender">
+            <CalendarDays size={15} /> Live-Kalender
+          </Link>
+          <Link href="/">Website ansehen ↗</Link>
+          <span>{user}</span>
+          <button className="btn" type="button" onClick={logout}>
+            <LogOut size={15} /> Abmelden
+          </button>
         </div>
       </nav>
 
-      <header style={{ margin: '28px 0' }}>
-        <p className="eyebrow">Alle Vereinstermine auf einen Blick</p>
+      <div className="adminlayout">
+        <aside className="side card">
+          <p className="eyebrow">Verwaltung</p>
+          <a href="#members">Mitglieder ({pendingMembers.length} offen)</a>
+          <a href="#new">+ Neuer Eintrag</a>
+          <a href="#training-management">
+            Trainingsverwaltung &amp; Anmeldungen
+          </a>
+          <a href="#events">Bisherige Termine &amp; Turniere</a>
+          <a href="#news">News verwalten</a>
+          <Link href="/kalender">Live-Kalender öffnen</Link>
+          <a href="mailto:thepadelclubbing@gmail.com">Hilfe / Kontakt</a>
+        </aside>
 
-        <h1 style={{ fontSize: 'clamp(32px, 6vw, 48px)', margin: '8px 0' }}>
-          Live-Kalender
-        </h1>
+        <div>
+          <p className="eyebrow">Dein Verein. Deine Inhalte.</p>
+          <h1 style={{ fontSize: 38, margin: '8px 0 16px' }}>
+            Admin-Dashboard
+          </h1>
 
-        <p className="muted">
-          Trainings, Turniere und datierte Vereinsnews – direkt aus unserem
-          Vereinssystem.
-        </p>
-      </header>
+          {message && (
+            <p className="success" role="status">
+              {message}
+            </p>
+          )}
 
-      <section className="card" style={{ padding: 16 }}>
-        <div className="sectionhead">
-          <button
-            className="btn"
-            type="button"
-            aria-label="Vorheriger Monat"
-            onClick={() => moveMonth(-1)}
-          >
-            <ChevronLeft size={18} />
-          </button>
+          <section id="members" className="section">
+            <div className="sectionhead">
+              <div>
+                <p className="eyebrow">Mitgliederverwaltung</p>
+                <h2>Mitgliedsanträge</h2>
+                <p className="muted">
+                  {pendingMembers.length} Antrag/Anträge warten auf Freigabe.
+                </p>
+              </div>
 
-          <h2 style={{ margin: 0 }}>
-            {monthNames[month.getMonth()]} {month.getFullYear()}
-          </h2>
-
-          <button
-            className="btn"
-            type="button"
-            aria-label="Nächster Monat"
-            onClick={() => moveMonth(1)}
-          >
-            <ChevronRight size={18} />
-          </button>
-        </div>
-
-        <div className="calendar-grid">
-          {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day) => (
-            <div className="calendar-weekday" key={day}>
-              {day}
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void load()}
+              >
+                <RefreshCw size={15} /> Aktualisieren
+              </button>
             </div>
-          ))}
 
-          {cells.map((day, index) => {
-            if (!day) {
-              return (
-                <div className="calendar-empty" key={`empty-${index}`} />
-              );
-            }
+            <div className="adminlist">
+              {pendingMembers.length === 0 ? (
+                <div className="empty">
+                  <Users size={24} />
+                  <p>Keine offenen Mitgliedsanträge.</p>
+                </div>
+              ) : (
+                pendingMembers.map((m) => (
+                  <article className="adminitem" key={m.id}>
+                    <div>
+                      <strong>
+                        {m.first_name} {m.last_name}
+                      </strong>
+                      <p>
+                        {m.phone || 'Keine Telefonnummer'} ·{' '}
+                        {m.skill_level || 'Keine Spielstärke'}
+                      </p>
+                      {m.message && <p>{m.message}</p>}
+                      <p className="small">
+                        Antrag vom{' '}
+                        {new Date(m.created_at).toLocaleDateString('de-AT')}
+                      </p>
+                      <span className="tag">Wartet auf Freigabe</span>
+                    </div>
 
-            const key = dayKey(day);
-            const dayItems = monthEntries.filter(
-              (entry) => entryDateKey(entry) === key,
-            );
+                    <div className="actions">
+                      <button
+                        className="btn primary"
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          void updateMemberStatus(m.id, 'approved')
+                        }
+                      >
+                        <Check size={16} /> Freigeben
+                      </button>
 
-            return (
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          void updateMemberStatus(m.id, 'rejected')
+                        }
+                      >
+                        <X size={16} /> Ablehnen
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+
+            <h3 style={{ marginTop: 24 }}>Bearbeitete Anträge</h3>
+
+            <div className="adminlist">
+              {processedMembers.length === 0 ? (
+                <div className="empty">Noch keine bearbeiteten Anträge.</div>
+              ) : (
+                processedMembers.map((m) => (
+                  <article className="adminitem" key={m.id}>
+                    <div>
+                      <strong>
+                        {m.first_name} {m.last_name}
+                      </strong>
+                      <p>
+                        {m.status === 'approved' ? 'Freigegeben' : 'Abgelehnt'}
+                      </p>
+                    </div>
+                    <span className="tag">{m.status}</span>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section id="new" className="card" style={{ marginTop: 16 }}>
+            <h2>
+              {editingId ? 'Eintrag bearbeiten' : 'Neuen Inhalt erstellen'}
+            </h2>
+
+            <div className="actions">
               <button
                 type="button"
-                key={key}
-                className={
-                  'calendar-day' +
-                  (selectedDay === key ? ' selected' : '') +
-                  (dayItems.length ? ' has-events' : '')
-                }
+                className={'btn ' + (kind === 'events' ? 'primary' : '')}
                 onClick={() => {
-                  setSelectedDay(key);
-                  setHighlighted(null);
+                  if (kind !== 'events') resetForm();
+                  setKind('events');
                 }}
               >
-                <span>{day}</span>
-
-                {dayItems.length > 0 && (
-                  <span className="calendar-dots">
-                    {dayItems.slice(0, 3).map((entry) => (
-                      <i
-                        key={`${entry.category}-${entry.id}`}
-                        className={categoryClass(entry.category)}
-                      />
-                    ))}
-                  </span>
-                )}
+                Training / Turnier
               </button>
-            );
-          })}
-        </div>
 
-        <div className="calendar-legend">
-          <span><i className="training" /> Training</span>
-          <span><i className="event" /> Turnier / Event</span>
-          <span><i className="news" /> News-Termin</span>
-        </div>
-      </section>
+              <button
+                type="button"
+                className={'btn ' + (kind === 'news' ? 'primary' : '')}
+                onClick={() => {
+                  if (kind !== 'news') resetForm();
+                  setKind('news');
+                }}
+              >
+                Vereinsnews
+              </button>
+            </div>
 
-      <section className="section">
-        <div className="sectionhead">
-          <div>
-            <p className="eyebrow">
-              {selectedDay ? 'Ausgewählter Tag' : 'Monatsübersicht'}
-            </p>
+            <form className="form" onSubmit={save} style={{ marginTop: 18 }}>
+              <div className="field">
+                <label htmlFor="title">Titel</label>
+                <input
+                  id="title"
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder={
+                    kind === 'events'
+                      ? 'z. B. Vereinstraining in Wildon'
+                      : 'z. B. Rückblick auf unser Turnier'
+                  }
+                />
+              </div>
 
-            <h2>
-              {selectedDay
-                ? new Date(`${selectedDay}T12:00:00`).toLocaleDateString(
-                    'de-AT',
-                    {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric',
-                    },
-                  )
-                : 'Alle Termine im Monat'}
-            </h2>
-          </div>
+              <div className="field">
+                <label htmlFor="description">Beschreibung</label>
+                <textarea
+                  id="description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Alle wichtigen Informationen …"
+                />
+              </div>
 
-          <button
-            className="btn"
-            type="button"
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            <CalendarDays size={16} />
-            {loading ? 'Lädt …' : 'Aktualisieren'}
-          </button>
-        </div>
+              {kind === 'events' && (
+                <>
+                  <div className="field">
+                    <label htmlFor="startsAt">Datum und Uhrzeit</label>
+                    <input
+                      id="startsAt"
+                      type="datetime-local"
+                      value={startsAt}
+                      onChange={(e) => setStartsAt(e.target.value)}
+                    />
+                  </div>
 
-        {loading ? (
-          <p>Kalender wird geladen …</p>
-        ) : message ? (
-          <p role="status">{message}</p>
-        ) : (selectedDay ? dayEntries : monthEntries).length === 0 ? (
-          <div className="empty">
-            Für diesen Zeitraum sind keine Termine eingetragen.
-          </div>
-        ) : (
-          <div className="adminlist">
-            {(selectedDay ? dayEntries : monthEntries).map((entry) => {
-              const key = `${entry.category.toLowerCase()}:${entry.id}`;
-              const isHighlighted = highlighted === key;
+                  <div className="field">
+                    <label htmlFor="location">Ort</label>
+                    <input
+                      id="location"
+                      value={location}
+                      onChange={(e) => setLocation(e.target.value)}
+                      placeholder="z. B. Wildon"
+                    />
+                  </div>
 
-              return (
-                <article
-                  className="adminitem"
-                  key={`${entry.category}-${entry.id}`}
-                  id={`entry-${entry.id}`}
-                  style={{
-                    display: 'block',
-                    border: isHighlighted
-                      ? '2px solid currentColor'
-                      : undefined,
-                    scrollMarginTop: 20,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: 12,
-                      alignItems: 'flex-start',
-                    }}
-                  >
-                    {entry.image_url && (
-                      <img
-                        src={entry.image_url}
-                        alt=""
-                        style={{
-                          width: 96,
-                          height: 84,
-                          objectFit: 'cover',
-                          borderRadius: 8,
-                        }}
-                      />
-                    )}
+                  <div className="field">
+                    <label htmlFor="category">Art</label>
+                    <select
+                      id="category"
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                    >
+                      <option>Training</option>
+                      <option>Turnier</option>
+                      <option>Meisterschaft</option>
+                      <option>Vereinsevent</option>
+                      <option>Clubbing</option>
+                    </select>
+                  </div>
+                </>
+              )}
 
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <span className={`tag ${categoryClass(entry.category)}`}>
-                        {entry.category === 'Event'
-                          ? 'Turnier / Event'
-                          : entry.category === 'Training'
-                            ? 'Training'
-                            : 'News-Termin'}
-                      </span>
+              {kind === 'news' && (
+                <div className="field">
+                  <label htmlFor="eventDate">
+                    Termin im Kalender (optional)
+                  </label>
+                  <input
+                    id="eventDate"
+                    type="date"
+                    value={eventDate}
+                    onChange={(e) => setEventDate(e.target.value)}
+                  />
+                  <span className="small">
+                    Nur ausfüllen, wenn diese News zusätzlich im Kalender
+                    erscheinen soll. Ohne Datum bleibt sie eine normale News.
+                  </span>
+                </div>
+              )}
 
-                      <h3 style={{ margin: '8px 0' }}>{entry.title}</h3>
+              <div className="field">
+                <label htmlFor="entry-image">Bild hochladen (optional)</label>
+                <input
+                  id="entry-image"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={(e) =>
+                    setImageFile(e.target.files?.[0] || null)
+                  }
+                />
+                <span className="small">
+                  Ein neues Foto ersetzt das bisherige Bild.{' '}
+                  {imageUrl && !imageFile
+                    ? 'Aktuell ist bereits ein Bild hinterlegt.'
+                    : 'Unterstützt JPG, PNG, WebP und GIF.'}
+                </span>
+              </div>
 
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={published}
+                  onChange={(e) => setPublished(e.target.checked)}
+                />
+                Sofort öffentlich anzeigen
+              </label>
+
+              <div className="actions">
+                <button className="btn primary" type="submit" disabled={busy}>
+                  {editingId ? <Pencil size={17} /> : <Plus size={17} />}
+                  {busy
+                    ? 'Speichert …'
+                    : editingId
+                      ? 'Änderungen speichern'
+                      : 'Eintrag speichern'}
+                </button>
+
+                {editingId && (
+                  <button type="button" className="btn" onClick={resetForm}>
+                    Bearbeitung abbrechen
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+
+          <TrainingManagement />
+
+          <section id="events" className="section">
+            <div className="sectionhead">
+              <div>
+                <p className="eyebrow">Termine</p>
+                <h2>Trainings &amp; Turniere</h2>
+              </div>
+
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void load()}
+              >
+                <RefreshCw size={15} /> Aktualisieren
+              </button>
+            </div>
+
+            <div className="adminlist">
+              {events.length > 0 ? (
+                events.map((x) => (
+                  <div className="adminitem" key={x.id}>
+                    <div>
+                      <strong>{x.title}</strong>
                       <p>
-                        {displayDate(
-                          entry.date,
-                          entry.category === 'News',
-                        )}
+                        {x.starts_at
+                          ? new Date(x.starts_at).toLocaleString('de-AT')
+                          : 'Termin folgt'}
+                        {x.location ? ' · ' + x.location : ''} ·{' '}
+                        {x.published ? 'Veröffentlicht' : 'Entwurf'}
                       </p>
+                    </div>
 
-                      {entry.location && (
-                        <p>
-                          <MapPin
-                            size={14}
-                            style={{ display: 'inline' }}
-                          />{' '}
-                          {entry.location}
-                        </p>
-                      )}
+                    <div className="actions">
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => startEdit('events', x)}
+                      >
+                        <Pencil size={16} /> Bearbeiten
+                      </button>
 
-                      {entry.description && <p>{entry.description}</p>}
+                      <button
+                        type="button"
+                        className="btn"
+                        aria-label="Löschen"
+                        onClick={() => void remove('events', x.id)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                ))
+              ) : (
+                <div className="empty">Noch keine Termine angelegt.</div>
+              )}
+            </div>
+          </section>
 
-      <style jsx>{`
-        .calendar-grid {
-          display: grid;
-          grid-template-columns: repeat(7, minmax(0, 1fr));
-          gap: 5px;
-          margin-top: 18px;
-        }
+          <section id="news" className="section">
+            <div className="sectionhead">
+              <div>
+                <p className="eyebrow">Updates</p>
+                <h2>Vereinsnews</h2>
+              </div>
 
-        .calendar-weekday {
-          text-align: center;
-          color: var(--muted, #888);
-          padding: 8px 0;
-          font-size: 13px;
-        }
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void load()}
+              >
+                <RefreshCw size={15} /> Aktualisieren
+              </button>
+            </div>
 
-        .calendar-empty {
-          min-height: 48px;
-        }
+            <div className="adminlist">
+              {news.length > 0 ? (
+                news.map((x) => (
+                  <div className="adminitem" key={x.id}>
+                    <div>
+                      <strong>{x.title}</strong>
+                      <p>
+                        {x.published ? 'Veröffentlicht' : 'Entwurf'}
+                        {x.event_date
+                          ? ` · Kalenderdatum: ${new Date(
+                              `${x.event_date.slice(0, 10)}T12:00:00`
+                            ).toLocaleDateString('de-AT')}`
+                          : ' · Kein Kalenderdatum'}
+                      </p>
+                    </div>
 
-        .calendar-day {
-          min-height: 54px;
-          border: 1px solid var(--border, #333);
-          background: transparent;
-          color: inherit;
-          border-radius: 9px;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 5px;
-          cursor: pointer;
-        }
+                    <div className="actions">
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => startEdit('news', x)}
+                      >
+                        <Pencil size={16} /> Bearbeiten
+                      </button>
 
-        .calendar-day.selected {
-          outline: 2px solid currentColor;
-          outline-offset: -2px;
-          font-weight: 700;
-        }
-
-        .calendar-day.has-events {
-          font-weight: 700;
-        }
-
-        .calendar-dots {
-          display: flex;
-          gap: 3px;
-          min-height: 5px;
-        }
-
-        .calendar-dots i,
-        .calendar-legend i {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          display: inline-block;
-        }
-
-        .training {
-          background: #22c55e;
-        }
-
-        .event {
-          background: #f59e0b;
-        }
-
-        .news {
-          background: #60a5fa;
-        }
-
-        .calendar-legend {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 14px;
-          margin-top: 18px;
-          font-size: 12px;
-        }
-
-        .calendar-legend span {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-
-        @media (max-width: 480px) {
-          .calendar-grid {
-            gap: 3px;
-          }
-
-          .calendar-day {
-            min-height: 44px;
-            border-radius: 6px;
-            font-size: 13px;
-          }
-
-          .calendar-empty {
-            min-height: 44px;
-          }
-        }
-      `}</style>
+                      <button
+                        type="button"
+                        className="btn"
+                        aria-label="Löschen"
+                        onClick={() => void remove('news', x.id)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="empty">Noch keine News angelegt.</div>
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
     </main>
   );
 }
