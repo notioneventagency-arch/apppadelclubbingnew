@@ -11,6 +11,8 @@ import {
   LogOut,
   CalendarDays,
   Newspaper,
+  Menu,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -56,6 +58,7 @@ export default function Home() {
   const [events, setEvents] = useState<Entry[]>([]);
   const [news, setNews] = useState<Entry[]>([]);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [loginEmail, setLoginEmail] = useState('');
@@ -259,6 +262,7 @@ export default function Home() {
     if (!supabase) return;
 
     setLoggingOut(true);
+    setMobileMenuOpen(false);
 
     const { error } = await supabase.auth.signOut();
 
@@ -286,7 +290,26 @@ export default function Home() {
             <span>PADELCLUBBING</span>
           </Link>
 
-          <div className="navlinks">
+          <button
+            type="button"
+            className="mobile-menu-toggle"
+            aria-label={mobileMenuOpen ? 'Menü schließen' : 'Menü öffnen'}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="main-navigation-links"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+          >
+            {mobileMenuOpen ? <X size={23} /> : <Menu size={23} />}
+          </button>
+
+          <div
+            id="main-navigation-links"
+            className={`navlinks${mobileMenuOpen ? ' mobile-menu-open' : ''}`}
+            onClick={(event) => {
+              if ((event.target as HTMLElement).closest('a, button')) {
+                setMobileMenuOpen(false);
+              }
+            }}
+          >
             {loading ? (
               <span className="muted">Lade Mitgliederbereich …</span>
             ) : isApprovedMember ? (
@@ -850,6 +873,228 @@ export default function Home() {
           </p>
         </div>
       </footer>
+
+      <style jsx global>{`
+        .mobile-menu-toggle {
+          display: none;
+          align-items: center;
+          justify-content: center;
+          width: 44px;
+          height: 44px;
+          flex: 0 0 44px;
+          border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+          border-radius: 13px;
+          color: inherit;
+          background: rgba(255, 255, 255, 0.04);
+          cursor: pointer;
+        }
+
+        .heroimg {
+          display: block;
+          width: 100%;
+          height: clamp(220px, 32vw, 350px);
+          object-fit: cover;
+          object-position: center;
+          border-radius: 22px;
+        }
+
+        .hero h1 {
+          font-size: clamp(2.65rem, 6vw, 4.5rem);
+          line-height: 1.02;
+          letter-spacing: -0.055em;
+          overflow-wrap: anywhere;
+        }
+
+        .hero .lead {
+          max-width: 720px;
+        }
+
+        @media (max-width: 760px) {
+          header.container {
+            position: relative;
+            z-index: 30;
+          }
+
+          header .nav {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            min-height: 64px;
+          }
+
+          header .brand {
+            min-width: 0;
+            gap: 9px;
+          }
+
+          header .brand img {
+            width: 40px;
+            height: 40px;
+            object-fit: contain;
+            flex: 0 0 40px;
+          }
+
+          header .brand span {
+            font-size: clamp(0.82rem, 3.5vw, 1rem);
+            letter-spacing: 0.015em;
+            white-space: nowrap;
+          }
+
+          .mobile-menu-toggle {
+            display: inline-flex;
+          }
+
+          header .navlinks {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 0;
+            right: 0;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 5px;
+            padding: 12px;
+            border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+            border-radius: 18px;
+            background: rgba(10, 8, 15, 0.98);
+            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.48);
+            backdrop-filter: blur(18px);
+          }
+
+          header .navlinks.mobile-menu-open {
+            display: flex;
+          }
+
+          header .navlinks a,
+          header .navlinks button {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 10px;
+            width: 100%;
+            min-height: 46px;
+            box-sizing: border-box;
+            padding: 11px 13px;
+            border-radius: 12px;
+            font-size: 0.96rem;
+            text-align: left;
+          }
+
+          header .navlinks button {
+            justify-content: center;
+          }
+
+          .hero {
+            padding-top: 12px;
+          }
+
+          .heroimg {
+            height: clamp(170px, 54vw, 260px);
+            border-radius: 17px;
+            object-position: center;
+          }
+
+          .hero .eyebrow {
+            margin-top: 18px;
+            font-size: 0.72rem;
+            letter-spacing: 0.14em;
+          }
+
+          .hero h1 {
+            margin-top: 12px;
+            font-size: clamp(2.45rem, 10.5vw, 4rem);
+            line-height: 0.99;
+            letter-spacing: -0.06em;
+          }
+
+          .hero .lead {
+            margin-top: 16px;
+            font-size: 1rem;
+            line-height: 1.6;
+          }
+
+          .actions {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            width: 100%;
+          }
+
+          .actions .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 0;
+            min-height: 48px;
+            box-sizing: border-box;
+            padding: 11px 10px;
+            font-size: 0.88rem;
+            line-height: 1.25;
+            text-align: center;
+            white-space: normal;
+          }
+
+          .section {
+            padding-top: 42px;
+            padding-bottom: 22px;
+          }
+
+          .sectionhead {
+            align-items: flex-start;
+            gap: 14px;
+            flex-wrap: wrap;
+          }
+
+          .sectionhead h2 {
+            font-size: clamp(1.8rem, 7vw, 2.6rem);
+            line-height: 1.08;
+          }
+
+          .grid {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 14px;
+          }
+
+          .card {
+            min-width: 0;
+            box-sizing: border-box;
+          }
+
+          .card img {
+            max-width: 100%;
+          }
+
+          input,
+          textarea,
+          select {
+            font-size: 16px;
+          }
+
+          .footer {
+            padding-bottom: calc(24px + env(safe-area-inset-bottom));
+          }
+
+          main {
+            padding-bottom: env(safe-area-inset-bottom);
+          }
+        }
+
+        @media (max-width: 390px) {
+          header .brand span {
+            font-size: 0.78rem;
+          }
+
+          .hero h1 {
+            font-size: clamp(2.2rem, 10vw, 2.8rem);
+          }
+
+          .actions {
+            grid-template-columns: minmax(0, 1fr);
+          }
+        }
+      `}</style>
     </>
   );
 }
