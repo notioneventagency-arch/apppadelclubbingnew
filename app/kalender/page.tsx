@@ -2,8 +2,14 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import { ChevronLeft, ChevronRight, CalendarDays, MapPin } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { supabase, supabaseReady } from '@/lib/supabase';
+import {
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
+  MapPin,
+} from 'lucide-react';
 
 type CalendarEntry = {
   id: string;
@@ -15,19 +21,34 @@ type CalendarEntry = {
   image_url: string | null;
 };
 
+type Profile = {
+  role: string;
+  status: string;
+};
+
+type AccessState = 'checking' | 'allowed' | 'denied';
+
 const monthNames = [
-  'Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni',
-  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+  'Jänner',
+  'Februar',
+  'März',
+  'April',
+  'Mai',
+  'Juni',
+  'Juli',
+  'August',
+  'September',
+  'Oktober',
+  'November',
+  'Dezember',
 ];
 
-// Lokales Datum als YYYY-MM-DD, ohne UTC-Verschiebung
 function localDateKey(value: string) {
   const date = new Date(value);
 
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-// Datumswert für reine Datenbank-Datumsangaben (z. B. event_date)
 function dateOnlyKey(value: string) {
   return value.slice(0, 10);
 }
@@ -69,21 +90,125 @@ function entryMonthDate(entry: CalendarEntry) {
 }
 
 export default function KalenderPage() {
+  const router = useRouter();
   const today = new Date();
 
+  const [access, setAccess] = useState<AccessState>('checking');
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const [month, setMonth] = useState(
-    new Date(today.getFullYear(), today.getMonth(), 1)
+    new Date(today.getFullYear(), today.getMonth(), 1),
   );
+
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
+
   const [selectedDay, setSelectedDay] = useState<string | null>(
-    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`,
   );
+
   const [highlighted, setHighlighted] = useState<string | null>(null);
 
+  // Prüft die Anmeldung UND den Freigabestatus des Profils.
+  useEffect(() => {
+    if (!supabase || !supabaseReady) {
+      setAccess('denied');
+      router.replace('/#mitgliederzugang');
+      return;
+    }
+
+    let active = true;
+    let redirecting = false;
+
+    async function checkAccess(userId: string | null) {
+      if (!active) return;
+
+      if (!userId) {
+        setIsAdmin(false);
+        setAccess('denied');
+
+        if (!redirecting) {
+          redirecting = true;
+          router.replace('/#mitgliederzugang');
+        }
+
+        return;
+      }
+
+      const { data: profile, error } = await supabase!
+        .from('profiles')
+        .select('role,status')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (!active) return;
+
+      const memberProfile = profile as Profile | null;
+
+      if (
+        error ||
+        !memberProfile ||
+        memberProfile.status !== 'approved' ||
+        !['member', 'admin'].includes(memberProfile.role)
+      ) {
+        setIsAdmin(false);
+        setAccess('denied');
+
+        if (!redirecting) {
+          redirecting = true;
+          router.replace('/#mitgliederzugang');
+        }
+
+        return;
+      }
+
+      redirecting = false;
+      setIsAdmin(memberProfile.role === 'admin');
+      setAccess('allowed');
+    }
+
+    async function checkCurrentUser() {
+      const { data, error } = await supabase!.auth.getUser();
+
+      if (!active) return;
+
+      if (error || !data.user) {
+        await checkAccess(null);
+      } else {
+        await checkAccess(data.user.id);
+      }
+    }
+
+    void checkCurrentUser();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+
+      setAccess('checking');
+      setIsAdmin(false);
+
+      const userId = session?.user?.id ?? null;
+
+      // Verzögert die Profilabfrage aus dem Auth-Callback.
+      setTimeout(() => {
+        if (active) void checkAccess(userId);
+      }, 0);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, [router]);
+
+  // Kalenderdaten werden erst nach erfolgreicher Freigabe geladen.
   const load = useCallback(async () => {
-    if (!supabase) {
+    if (access !== 'allowed') return;
+
+    if (!supabase || !supabaseReady) {
       setMessage('Die Verbindung zur Datenbank ist nicht verfügbar.');
       setLoading(false);
       return;
@@ -101,7 +226,9 @@ export default function KalenderPage() {
 
       supabase
         .from('events')
-        .select('id,title,description,location,starts_at,category,image_url,published')
+        .select(
+          'id,title,description,location,starts_at,category,image_url,published',
+        )
         .eq('published', true)
         .order('starts_at', { ascending: true }),
 
@@ -121,7 +248,7 @@ export default function KalenderPage() {
       });
 
       setMessage(
-        'Termine konnten nicht vollständig geladen werden. Bitte Datenbankspalten und Leseberechtigungen prüfen.'
+        'Termine konnten nicht vollständig geladen werden. Bitte Datenbankspalten und Leseberechtigungen prüfen.',
       );
       setEntries([]);
       setLoading(false);
@@ -158,7 +285,6 @@ export default function KalenderPage() {
         id: String(x.id),
         title: x.title,
         description: x.description,
-        // Als reines Datum speichern, nicht in eine UTC-Zeit umwandeln
         date: dateOnlyKey(x.event_date!),
         location: null,
         category: 'News',
@@ -167,12 +293,13 @@ export default function KalenderPage() {
 
     const merged = [...trainings, ...events, ...news].sort(
       (a, b) =>
-        entryMonthDate(a).getTime() - entryMonthDate(b).getTime()
+        entryMonthDate(a).getTime() - entryMonthDate(b).getTime(),
     );
 
     setEntries(merged);
 
-    // Push-Direktlink auswerten, z. B. /kalender?type=event&id=123
+    // Push-Direktlinks beibehalten:
+    // /kalender?type=training&id=123
     const params = new URLSearchParams(window.location.search);
     const type = params.get('type')?.toLowerCase();
     const id = params.get('id');
@@ -190,27 +317,27 @@ export default function KalenderPage() {
       const found = merged.find(
         (entry) =>
           entry.id === id &&
-          entry.category === expectedCategory
+          entry.category === expectedCategory,
       );
 
       if (found) {
         setHighlighted(`${type}:${id}`);
 
         const targetDate = entryMonthDate(found);
-        const targetDay = entryDateKey(found);
 
         setMonth(
           new Date(
             targetDate.getFullYear(),
             targetDate.getMonth(),
-            1
-          )
+            1,
+          ),
         );
-        setSelectedDay(targetDay);
+
+        setSelectedDay(entryDateKey(found));
       } else {
         setHighlighted(null);
         setMessage(
-          'Der verlinkte Termin wurde nicht gefunden. Möglicherweise wurde er gelöscht oder ist nicht veröffentlicht.'
+          'Der verlinkte Termin wurde nicht gefunden. Möglicherweise wurde er gelöscht oder ist nicht veröffentlicht.',
         );
       }
     } else {
@@ -218,11 +345,13 @@ export default function KalenderPage() {
     }
 
     setLoading(false);
-  }, []);
+  }, [access]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (access === 'allowed') {
+      void load();
+    }
+  }, [access, load]);
 
   const monthEntries = useMemo(
     () =>
@@ -234,28 +363,28 @@ export default function KalenderPage() {
           date.getMonth() === month.getMonth()
         );
       }),
-    [entries, month]
+    [entries, month],
   );
 
   const dayEntries = useMemo(
     () =>
       monthEntries.filter(
-        (entry) => entryDateKey(entry) === selectedDay
+        (entry) => entryDateKey(entry) === selectedDay,
       ),
-    [monthEntries, selectedDay]
+    [monthEntries, selectedDay],
   );
 
   const firstWeekday =
     (new Date(
       month.getFullYear(),
       month.getMonth(),
-      1
+      1,
     ).getDay() + 6) % 7;
 
   const daysInMonth = new Date(
     month.getFullYear(),
     month.getMonth() + 1,
-    0
+    0,
   ).getDate();
 
   const cells = [
@@ -267,7 +396,7 @@ export default function KalenderPage() {
     const nextMonth = new Date(
       month.getFullYear(),
       month.getMonth() + amount,
-      1
+      1,
     );
 
     setMonth(nextMonth);
@@ -285,6 +414,29 @@ export default function KalenderPage() {
     return 'news';
   }
 
+  // Bis zur bestätigten Zugriffsentscheidung keine Kalenderdaten anzeigen.
+  if (access !== 'allowed') {
+    return (
+      <main className="container section">
+        <div className="card" style={{ padding: 28, textAlign: 'center' }}>
+          <CalendarDays
+            size={32}
+            style={{ margin: '0 auto 12px', display: 'block' }}
+          />
+          <h1>Mitgliederkalender</h1>
+          <p className="muted">
+            {access === 'checking'
+              ? 'Dein Mitgliederzugang wird überprüft …'
+              : 'Du wirst zum Mitgliederzugang weitergeleitet.'}
+          </p>
+          <Link className="btn" href="/#mitgliederzugang">
+            Zum Mitgliederzugang
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="container section">
       <nav className="nav">
@@ -295,7 +447,7 @@ export default function KalenderPage() {
 
         <div className="navlinks">
           <Link href="/">Startseite</Link>
-          <Link href="/admin">Admin</Link>
+          {isAdmin && <Link href="/admin">Adminbereich</Link>}
         </div>
       </nav>
 
@@ -353,7 +505,7 @@ export default function KalenderPage() {
 
             const key = dayKey(day);
             const dayItems = monthEntries.filter(
-              (entry) => entryDateKey(entry) === key
+              (entry) => entryDateKey(entry) === key,
             );
 
             return (
@@ -409,7 +561,7 @@ export default function KalenderPage() {
                       day: 'numeric',
                       month: 'long',
                       year: 'numeric',
-                    }
+                    },
                   )
                 : 'Alle Termine im Monat'}
             </h2>
@@ -419,8 +571,10 @@ export default function KalenderPage() {
             className="btn"
             type="button"
             onClick={() => void load()}
+            disabled={loading}
           >
-            <CalendarDays size={16} /> Aktualisieren
+            <CalendarDays size={16} />
+            {loading ? 'Lädt …' : 'Aktualisieren'}
           </button>
         </div>
 
@@ -485,7 +639,7 @@ export default function KalenderPage() {
                       <p>
                         {displayDate(
                           entry.date,
-                          entry.category === 'News'
+                          entry.category === 'News',
                         )}
                       </p>
 
