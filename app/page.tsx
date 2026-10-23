@@ -47,6 +47,57 @@ function dateLabel(value: string | null) {
   });
 }
 
+function renderDescription(value: string | null) {
+  if (!value) return 'Weitere Informationen folgen.';
+
+  const urlPattern = /https?:\/\/[^\s<>"']+/gi;
+  const parts = value.split(urlPattern);
+  const urls = value.match(urlPattern) || [];
+  let urlIndex = 0;
+
+  return parts.flatMap((part, index) => {
+    const elements = [];
+
+    if (part) {
+      elements.push(
+        <span key={`text-${index}`}>{part}</span>,
+      );
+    }
+
+    if (index < urls.length) {
+      const rawUrl = urls[urlIndex++];
+      const trailingMatch = rawUrl.match(/[.,!?;:)]+$/);
+      const trailing = trailingMatch?.[0] || '';
+      const url = trailing
+        ? rawUrl.slice(0, -trailing.length)
+        : rawUrl;
+
+      if (url) {
+        elements.push(
+          <a
+            key={`link-${index}`}
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="news-link"
+            aria-label="Ticketseite in neuem Tab öffnen"
+          >
+            Tickets sichern <ArrowUpRight size={14} />
+          </a>,
+        );
+      }
+
+      if (trailing) {
+        elements.push(
+          <span key={`punctuation-${index}`}>{trailing}</span>,
+        );
+      }
+    }
+
+    return elements;
+  });
+}
+
 export default function Home() {
   const router = useRouter();
 
@@ -74,12 +125,14 @@ export default function Home() {
     setIsAdmin(false);
     setSignedIn(Boolean(userId));
 
-    if (!userId || !supabase) {
+    const client = supabase;
+
+    if (!userId || !client) {
       setLoading(false);
       return;
     }
 
-    const { data: profile, error: profileQueryError } = await supabase
+    const { data: profile, error: profileQueryError } = await client
       .from('profiles')
       .select('role,status')
       .eq('id', userId)
@@ -106,12 +159,11 @@ export default function Home() {
       return;
     }
 
-    const admin = memberProfile.role === 'admin';
-    setIsAdmin(admin);
+    setIsAdmin(memberProfile.role === 'admin');
     setIsApprovedMember(true);
 
     const [eventsResult, newsResult] = await Promise.all([
-      supabase
+      client
         .from('events')
         .select('*')
         .eq('published', true)
@@ -121,7 +173,7 @@ export default function Home() {
         })
         .limit(6),
 
-      supabase
+      client
         .from('news')
         .select('*')
         .eq('published', true)
@@ -151,7 +203,9 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!supabase || !supabaseReady) {
+    const client = supabase;
+
+    if (!client || !supabaseReady) {
       setLoading(false);
       return;
     }
@@ -159,7 +213,7 @@ export default function Home() {
     let active = true;
 
     async function checkCurrentUser() {
-      const { data, error } = await supabase!.auth.getUser();
+      const { data, error } = await client.auth.getUser();
 
       if (!active) return;
 
@@ -174,7 +228,7 @@ export default function Home() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = client.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
 
       const userId = session?.user?.id ?? null;
@@ -194,7 +248,9 @@ export default function Home() {
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!supabase || !supabaseReady) {
+    const client = supabase;
+
+    if (!client || !supabaseReady) {
       setLoginMessage(
         'Die Verbindung zum Mitgliederportal ist momentan nicht verfügbar.',
       );
@@ -205,7 +261,7 @@ export default function Home() {
     setLoginMessage('');
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await client.auth.signInWithPassword({
         email: loginEmail.trim(),
         password: loginPassword,
       });
@@ -219,7 +275,7 @@ export default function Home() {
 
       setLoading(true);
 
-      const { data: profile, error: profileQueryError } = await supabase
+      const { data: profile, error: profileQueryError } = await client
         .from('profiles')
         .select('role,status')
         .eq('id', data.user.id)
@@ -259,12 +315,13 @@ export default function Home() {
   }
 
   async function handleLogout() {
-    if (!supabase) return;
+    const client = supabase;
+    if (!client) return;
 
     setLoggingOut(true);
     setMobileMenuOpen(false);
 
-    const { error } = await supabase.auth.signOut();
+    const { error } = await client.auth.signOut();
 
     if (error) {
       console.error('Abmeldung fehlgeschlagen:', error.message);
@@ -526,10 +583,7 @@ export default function Home() {
                       <div style={{ marginBottom: 16 }}>
                         <label
                           htmlFor="home-email"
-                          style={{
-                            display: 'block',
-                            marginBottom: 8,
-                          }}
+                          style={{ display: 'block', marginBottom: 8 }}
                         >
                           E-Mail-Adresse
                         </label>
@@ -557,10 +611,7 @@ export default function Home() {
                       <div style={{ marginBottom: 18 }}>
                         <label
                           htmlFor="home-password"
-                          style={{
-                            display: 'block',
-                            marginBottom: 8,
-                          }}
+                          style={{ display: 'block', marginBottom: 8 }}
                         >
                           Passwort
                         </label>
@@ -612,12 +663,7 @@ export default function Home() {
                         {!loginBusy && <ArrowUpRight size={18} />}
                       </button>
 
-                      <p
-                        style={{
-                          textAlign: 'center',
-                          marginTop: 18,
-                        }}
-                      >
+                      <p style={{ textAlign: 'center', marginTop: 18 }}>
                         <Link href="/login" className="muted">
                           Passwort vergessen?
                         </Link>
@@ -753,7 +799,7 @@ export default function Home() {
               {news.length > 0 ? (
                 <div className="grid">
                   {news.map((item) => (
-                    <article className="card" key={item.id}>
+                    <article className="card news-card" key={item.id}>
                       {item.image_url && (
                         <img
                           src={item.image_url}
@@ -773,8 +819,8 @@ export default function Home() {
                       <span className="tag">News</span>
                       <h3>{item.title}</h3>
 
-                      <p className="muted">
-                        {item.description || 'Weitere Informationen folgen.'}
+                      <p className="muted news-description">
+                        {renderDescription(item.description)}
                       </p>
                     </article>
                   ))}
@@ -788,48 +834,54 @@ export default function Home() {
 
             <section id="verein" className="container section">
               <div className="grid">
-                <article className="card">
+                <Link href="/kalender" className="card feature-card">
                   <Users color="var(--cyan)" size={28} />
                   <h3>Verein &amp; Community</h3>
                   <p className="muted">
                     Gemeinsam besser werden, neue Leute kennenlernen und Padel
                     erleben.
                   </p>
-                </article>
+                  <span className="feature-link">
+                    Zum Vereinskalender <ArrowUpRight size={16} />
+                  </span>
+                </Link>
 
-                <article className="card">
+                <Link href="/kalender" className="card feature-card">
                   <Trophy color="var(--pink)" size={28} />
                   <h3>Turniere &amp; Meisterschaften</h3>
                   <p className="muted">
                     Spiele mit, sammle Erfahrung und vertrete unseren Verein.
                   </p>
-                </article>
+                  <span className="feature-link">
+                    Termine ansehen <ArrowUpRight size={16} />
+                  </span>
+                </Link>
 
-                <article className="card">
+                <a
+                  href="https://www.instagram.com/padelclubbing/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="card feature-card"
+                >
                   <Images color="#b78aff" size={28} />
                   <h3>Erinnerungen teilen</h3>
                   <p className="muted">
-                    Fotos und Highlights unserer Trainings und Events an einem
-                    Ort.
+                    Fotos und Highlights unserer Trainings und Events entdecken
+                    und mit der Community teilen.
                   </p>
-                </article>
+                  <span className="feature-link">
+                    Instagram öffnen <ArrowUpRight size={16} />
+                  </span>
+                </a>
 
-                <Link
-                  href="/angebote"
-                  className="card"
-                  style={{
-                    display: 'block',
-                    color: 'inherit',
-                    textDecoration: 'none',
-                  }}
-                >
+                <Link href="/angebote" className="card feature-card">
                   <Gift color="var(--cyan)" size={28} />
                   <h3>Member Benefits</h3>
                   <p className="muted">
                     Exklusive Angebote, Sponsorvorteile und Rabattcodes für
                     unsere Mitglieder.
                   </p>
-                  <span className="btn">
+                  <span className="feature-link">
                     Angebote entdecken <ArrowUpRight size={17} />
                   </span>
                 </Link>
@@ -907,6 +959,76 @@ export default function Home() {
 
         .hero .lead {
           max-width: 720px;
+        }
+
+        .news-card {
+          min-width: 0;
+          overflow: hidden;
+        }
+
+        .news-description {
+          min-width: 0;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          line-height: 1.6;
+        }
+
+        .news-link {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          max-width: 100%;
+          margin-top: 5px;
+          color: var(--cyan, #22d3ee);
+          text-decoration: underline;
+          text-underline-offset: 3px;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          cursor: pointer;
+        }
+
+        .news-link:hover {
+          color: var(--pink, #f472b6);
+        }
+
+        .news-link svg {
+          flex: 0 0 auto;
+        }
+
+        .feature-card {
+          display: block;
+          min-width: 0;
+          color: inherit;
+          text-decoration: none;
+          cursor: pointer;
+          transition:
+            transform 180ms ease,
+            border-color 180ms ease,
+            background 180ms ease;
+        }
+
+        .feature-card:hover {
+          transform: translateY(-3px);
+          border-color: var(--cyan, #22d3ee);
+        }
+
+        .feature-card:focus-visible {
+          outline: 2px solid var(--cyan, #22d3ee);
+          outline-offset: 4px;
+        }
+
+        .feature-link {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          margin-top: 8px;
+          color: var(--cyan, #22d3ee);
+          font-size: 14px;
+          font-weight: 600;
+        }
+
+        .feature-link svg {
+          flex: 0 0 auto;
         }
 
         @media (max-width: 760px) {
