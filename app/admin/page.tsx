@@ -14,6 +14,7 @@ import {
   Check,
   X,
   Users,
+  CalendarDays,
 } from 'lucide-react';
 
 type Entry = {
@@ -26,6 +27,7 @@ type Entry = {
   published: boolean;
   created_at?: string;
   image_url?: string | null;
+  event_date?: string | null;
 };
 
 type Member = {
@@ -48,19 +50,23 @@ export default function Admin() {
   const [user, setUser] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [checking, setChecking] = useState(true);
+
   const [events, setEvents] = useState<Entry[]>([]);
   const [news, setNews] = useState<Entry[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+
   const [kind, setKind] = useState<'events' | 'news'>('events');
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [startsAt, setStartsAt] = useState('');
+  const [eventDate, setEventDate] = useState('');
   const [location, setLocation] = useState('');
   const [category, setCategory] = useState('Training');
   const [published, setPublished] = useState(true);
   const [imageUrl, setImageUrl] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingWasPublished, setEditingWasPublished] = useState(false);
 
@@ -143,7 +149,8 @@ export default function Admin() {
 
   async function sendAdminPush(
     titleText: string,
-    bodyText: string
+    bodyText: string,
+    url: string
   ): Promise<string> {
     if (!supabase) {
       return 'Push nicht gesendet: Supabase ist nicht verfügbar.';
@@ -168,7 +175,7 @@ export default function Admin() {
         body: JSON.stringify({
           title: titleText,
           body: bodyText,
-          url: '/',
+          url,
         }),
       });
 
@@ -191,18 +198,23 @@ export default function Admin() {
     setKind(table);
     setEditingId(entry.id);
     setEditingWasPublished(Boolean(entry.published));
+
     setTitle(entry.title || '');
     setDescription(entry.description || '');
+
     setStartsAt(
       entry.starts_at
         ? new Date(entry.starts_at).toISOString().slice(0, 16)
         : ''
     );
+
+    setEventDate(entry.event_date?.slice(0, 10) || '');
     setLocation(entry.location || '');
     setCategory(entry.category || 'Training');
     setPublished(Boolean(entry.published));
     setImageUrl(entry.image_url || '');
     setImageFile(null);
+
     setMessage('Eintrag wird bearbeitet. Änderungen unten speichern.');
     document.getElementById('new')?.scrollIntoView({ behavior: 'smooth' });
   }
@@ -213,6 +225,7 @@ export default function Admin() {
     setTitle('');
     setDescription('');
     setStartsAt('');
+    setEventDate('');
     setLocation('');
     setCategory('Training');
     setPublished(true);
@@ -276,19 +289,43 @@ export default function Admin() {
         row.category = category || 'Vereinstermin';
       }
 
+      if (kind === 'news') {
+        row.event_date = eventDate || null;
+      }
+
       const isNewEntry = !editingId;
       const shouldSendPush =
         published && (isNewEntry || !editingWasPublished);
 
-      const query = editingId
-        ? supabase.from(kind).update(row).eq('id', editingId)
-        : supabase.from(kind).insert(row);
+      let savedId = editingId || '';
 
-      const { error } = await query;
+      if (editingId) {
+        const { data, error } = await supabase
+          .from(kind)
+          .update(row)
+          .eq('id', editingId)
+          .select('id')
+          .single();
 
-      if (error) {
-        setMessage('Fehler: ' + error.message);
-        return;
+        if (error) {
+          setMessage('Fehler: ' + error.message);
+          return;
+        }
+
+        savedId = data.id;
+      } else {
+        const { data, error } = await supabase
+          .from(kind)
+          .insert(row)
+          .select('id')
+          .single();
+
+        if (error) {
+          setMessage('Fehler: ' + error.message);
+          return;
+        }
+
+        savedId = data.id;
       }
 
       let pushResult = '';
@@ -316,14 +353,25 @@ export default function Admin() {
               ]
                 .filter(Boolean)
                 .join(' · ')
-            : '';
+            : eventDate
+              ? `Kalendertermin: ${new Date(
+                  `${eventDate}T12:00:00`
+                ).toLocaleDateString('de-AT')}`
+              : '';
 
         const pushBody =
           eventDetails ||
           description.trim() ||
           'Es gibt Neuigkeiten bei PADELCLUBBING.';
 
-        pushResult = await sendAdminPush(pushTitle, pushBody);
+        const pushUrl =
+          kind === 'events'
+            ? `/kalender?type=event&id=${encodeURIComponent(savedId)}`
+            : eventDate
+              ? `/kalender?type=news&id=${encodeURIComponent(savedId)}`
+              : '/';
+
+        pushResult = await sendAdminPush(pushTitle, pushBody, pushUrl);
       }
 
       const savedMessage = isNewEntry
@@ -456,6 +504,9 @@ export default function Admin() {
         </Link>
 
         <div className="navlinks">
+          <Link href="/kalender">
+            <CalendarDays size={15} /> Live-Kalender
+          </Link>
           <Link href="/">Website ansehen ↗</Link>
           <span>{user}</span>
           <button className="btn" type="button" onClick={logout}>
@@ -474,6 +525,7 @@ export default function Admin() {
           </a>
           <a href="#events">Bisherige Termine &amp; Turniere</a>
           <a href="#news">News verwalten</a>
+          <Link href="/kalender">Live-Kalender öffnen</Link>
           <a href="mailto:thepadelclubbing@gmail.com">Hilfe / Kontakt</a>
         </aside>
 
@@ -613,11 +665,7 @@ export default function Admin() {
               </button>
             </div>
 
-            <form
-              className="form"
-              onSubmit={save}
-              style={{ marginTop: 18 }}
-            >
+            <form className="form" onSubmit={save} style={{ marginTop: 18 }}>
               <div className="field">
                 <label htmlFor="title">Titel</label>
                 <input
@@ -682,6 +730,24 @@ export default function Admin() {
                 </>
               )}
 
+              {kind === 'news' && (
+                <div className="field">
+                  <label htmlFor="eventDate">
+                    Termin im Kalender (optional)
+                  </label>
+                  <input
+                    id="eventDate"
+                    type="date"
+                    value={eventDate}
+                    onChange={(e) => setEventDate(e.target.value)}
+                  />
+                  <span className="small">
+                    Nur ausfüllen, wenn diese News zusätzlich im Kalender
+                    erscheinen soll. Ohne Datum bleibt sie eine normale News.
+                  </span>
+                </div>
+              )}
+
               <div className="field">
                 <label htmlFor="entry-image">Bild hochladen (optional)</label>
                 <input
@@ -720,11 +786,7 @@ export default function Admin() {
                 </button>
 
                 {editingId && (
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={resetForm}
-                  >
+                  <button type="button" className="btn" onClick={resetForm}>
                     Bearbeitung abbrechen
                   </button>
                 )}
@@ -797,6 +859,14 @@ export default function Admin() {
                 <p className="eyebrow">Updates</p>
                 <h2>Vereinsnews</h2>
               </div>
+
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void load()}
+              >
+                <RefreshCw size={15} /> Aktualisieren
+              </button>
             </div>
 
             <div className="adminlist">
@@ -805,7 +875,14 @@ export default function Admin() {
                   <div className="adminitem" key={x.id}>
                     <div>
                       <strong>{x.title}</strong>
-                      <p>{x.published ? 'Veröffentlicht' : 'Entwurf'}</p>
+                      <p>
+                        {x.published ? 'Veröffentlicht' : 'Entwurf'}
+                        {x.event_date
+                          ? ` · Kalenderdatum: ${new Date(
+                              `${x.event_date.slice(0, 10)}T12:00:00`
+                            ).toLocaleDateString('de-AT')}`
+                          : ' · Kein Kalenderdatum'}
+                      </p>
                     </div>
 
                     <div className="actions">
