@@ -20,13 +20,33 @@ const monthNames = [
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ];
 
+// Lokales Datum als YYYY-MM-DD, ohne UTC-Verschiebung
 function localDateKey(value: string) {
   const date = new Date(value);
+
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-function displayDate(value: string) {
-  return new Date(value).toLocaleString('de-AT', {
+// Datumswert für reine Datenbank-Datumsangaben (z. B. event_date)
+function dateOnlyKey(value: string) {
+  return value.slice(0, 10);
+}
+
+function displayDate(value: string, dateOnly = false) {
+  const date = dateOnly
+    ? new Date(`${dateOnlyKey(value)}T12:00:00`)
+    : new Date(value);
+
+  if (dateOnly) {
+    return date.toLocaleDateString('de-AT', {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    });
+  }
+
+  return date.toLocaleString('de-AT', {
     weekday: 'short',
     day: '2-digit',
     month: 'long',
@@ -36,8 +56,21 @@ function displayDate(value: string) {
   });
 }
 
+function entryDateKey(entry: CalendarEntry) {
+  return entry.category === 'News'
+    ? dateOnlyKey(entry.date)
+    : localDateKey(entry.date);
+}
+
+function entryMonthDate(entry: CalendarEntry) {
+  return entry.category === 'News'
+    ? new Date(`${dateOnlyKey(entry.date)}T12:00:00`)
+    : new Date(entry.date);
+}
+
 export default function KalenderPage() {
   const today = new Date();
+
   const [month, setMonth] = useState(
     new Date(today.getFullYear(), today.getMonth(), 1)
   );
@@ -45,7 +78,7 @@ export default function KalenderPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [selectedDay, setSelectedDay] = useState<string | null>(
-    localDateKey(today.toISOString())
+    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   );
   const [highlighted, setHighlighted] = useState<string | null>(null);
 
@@ -81,6 +114,12 @@ export default function KalenderPage() {
     ]);
 
     if (trainingResult.error || eventResult.error || newsResult.error) {
+      console.error('Kalender-Ladefehler:', {
+        trainings: trainingResult.error,
+        events: eventResult.error,
+        news: newsResult.error,
+      });
+
       setMessage(
         'Termine konnten nicht vollständig geladen werden. Bitte Datenbankspalten und Leseberechtigungen prüfen.'
       );
@@ -92,7 +131,7 @@ export default function KalenderPage() {
     const trainings: CalendarEntry[] = (trainingResult.data || [])
       .filter((x) => x.starts_at)
       .map((x) => ({
-        id: x.id,
+        id: String(x.id),
         title: x.title,
         description: x.description,
         date: x.starts_at!,
@@ -104,7 +143,7 @@ export default function KalenderPage() {
     const events: CalendarEntry[] = (eventResult.data || [])
       .filter((x) => x.starts_at)
       .map((x) => ({
-        id: x.id,
+        id: String(x.id),
         title: x.title,
         description: x.description,
         date: x.starts_at!,
@@ -116,37 +155,80 @@ export default function KalenderPage() {
     const news: CalendarEntry[] = (newsResult.data || [])
       .filter((x) => x.event_date)
       .map((x) => ({
-        id: x.id,
+        id: String(x.id),
         title: x.title,
         description: x.description,
-        date: `${x.event_date}T12:00:00`,
+        // Als reines Datum speichern, nicht in eine UTC-Zeit umwandeln
+        date: dateOnlyKey(x.event_date!),
         location: null,
         category: 'News',
         image_url: x.image_url,
       }));
 
-    setEntries([...trainings, ...events, ...news].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-    ));
+    const merged = [...trainings, ...events, ...news].sort(
+      (a, b) =>
+        entryMonthDate(a).getTime() - entryMonthDate(b).getTime()
+    );
+
+    setEntries(merged);
+
+    // Push-Direktlink auswerten, z. B. /kalender?type=event&id=123
+    const params = new URLSearchParams(window.location.search);
+    const type = params.get('type')?.toLowerCase();
+    const id = params.get('id');
+
+    if (type && id) {
+      const expectedCategory =
+        type === 'training'
+          ? 'Training'
+          : type === 'event'
+            ? 'Event'
+            : type === 'news'
+              ? 'News'
+              : null;
+
+      const found = merged.find(
+        (entry) =>
+          entry.id === id &&
+          entry.category === expectedCategory
+      );
+
+      if (found) {
+        setHighlighted(`${type}:${id}`);
+
+        const targetDate = entryMonthDate(found);
+        const targetDay = entryDateKey(found);
+
+        setMonth(
+          new Date(
+            targetDate.getFullYear(),
+            targetDate.getMonth(),
+            1
+          )
+        );
+        setSelectedDay(targetDay);
+      } else {
+        setHighlighted(null);
+        setMessage(
+          'Der verlinkte Termin wurde nicht gefunden. Möglicherweise wurde er gelöscht oder ist nicht veröffentlicht.'
+        );
+      }
+    } else {
+      setHighlighted(null);
+    }
+
     setLoading(false);
   }, []);
 
   useEffect(() => {
     void load();
-
-    const params = new URLSearchParams(window.location.search);
-    const type = params.get('type');
-    const id = params.get('id');
-
-    if (type && id) {
-      setHighlighted(`${type}:${id}`);
-    }
   }, [load]);
 
   const monthEntries = useMemo(
     () =>
       entries.filter((entry) => {
-        const date = new Date(entry.date);
+        const date = entryMonthDate(entry);
+
         return (
           date.getFullYear() === month.getFullYear() &&
           date.getMonth() === month.getMonth()
@@ -158,16 +240,17 @@ export default function KalenderPage() {
   const dayEntries = useMemo(
     () =>
       monthEntries.filter(
-        (entry) => localDateKey(entry.date) === selectedDay
+        (entry) => entryDateKey(entry) === selectedDay
       ),
     [monthEntries, selectedDay]
   );
 
-  const firstWeekday = (new Date(
-    month.getFullYear(),
-    month.getMonth(),
-    1
-  ).getDay() + 6) % 7;
+  const firstWeekday =
+    (new Date(
+      month.getFullYear(),
+      month.getMonth(),
+      1
+    ).getDay() + 6) % 7;
 
   const daysInMonth = new Date(
     month.getFullYear(),
@@ -181,8 +264,15 @@ export default function KalenderPage() {
   ];
 
   function moveMonth(amount: number) {
-    setMonth(new Date(month.getFullYear(), month.getMonth() + amount, 1));
+    const nextMonth = new Date(
+      month.getFullYear(),
+      month.getMonth() + amount,
+      1
+    );
+
+    setMonth(nextMonth);
     setSelectedDay(null);
+    setHighlighted(null);
   }
 
   function dayKey(day: number) {
@@ -202,6 +292,7 @@ export default function KalenderPage() {
           <img src="/padelclubbing-logo.jpg" alt="PADELCLUBBING" />
           <span>PADELCLUBBING</span>
         </Link>
+
         <div className="navlinks">
           <Link href="/">Startseite</Link>
           <Link href="/admin">Admin</Link>
@@ -210,9 +301,11 @@ export default function KalenderPage() {
 
       <header style={{ margin: '28px 0' }}>
         <p className="eyebrow">Alle Vereinstermine auf einen Blick</p>
+
         <h1 style={{ fontSize: 'clamp(32px, 6vw, 48px)', margin: '8px 0' }}>
           Live-Kalender
         </h1>
+
         <p className="muted">
           Trainings, Turniere und datierte Vereinsnews – direkt aus unserem
           Vereinssystem.
@@ -246,17 +339,21 @@ export default function KalenderPage() {
 
         <div className="calendar-grid">
           {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day) => (
-            <div className="calendar-weekday" key={day}>{day}</div>
+            <div className="calendar-weekday" key={day}>
+              {day}
+            </div>
           ))}
 
           {cells.map((day, index) => {
             if (!day) {
-              return <div className="calendar-empty" key={`empty-${index}`} />;
+              return (
+                <div className="calendar-empty" key={`empty-${index}`} />
+              );
             }
 
             const key = dayKey(day);
             const dayItems = monthEntries.filter(
-              (entry) => localDateKey(entry.date) === key
+              (entry) => entryDateKey(entry) === key
             );
 
             return (
@@ -268,9 +365,13 @@ export default function KalenderPage() {
                   (selectedDay === key ? ' selected' : '') +
                   (dayItems.length ? ' has-events' : '')
                 }
-                onClick={() => setSelectedDay(key)}
+                onClick={() => {
+                  setSelectedDay(key);
+                  setHighlighted(null);
+                }}
               >
                 <span>{day}</span>
+
                 {dayItems.length > 0 && (
                   <span className="calendar-dots">
                     {dayItems.slice(0, 3).map((entry) => (
@@ -299,17 +400,26 @@ export default function KalenderPage() {
             <p className="eyebrow">
               {selectedDay ? 'Ausgewählter Tag' : 'Monatsübersicht'}
             </p>
+
             <h2>
               {selectedDay
                 ? new Date(`${selectedDay}T12:00:00`).toLocaleDateString(
                     'de-AT',
-                    { day: 'numeric', month: 'long', year: 'numeric' }
+                    {
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    }
                   )
                 : 'Alle Termine im Monat'}
             </h2>
           </div>
 
-          <button className="btn" type="button" onClick={() => void load()}>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => void load()}
+          >
             <CalendarDays size={16} /> Aktualisieren
           </button>
         </div>
@@ -319,15 +429,14 @@ export default function KalenderPage() {
         ) : message ? (
           <p role="status">{message}</p>
         ) : (selectedDay ? dayEntries : monthEntries).length === 0 ? (
-          <div className="empty">Für diesen Zeitraum sind keine Termine eingetragen.</div>
+          <div className="empty">
+            Für diesen Zeitraum sind keine Termine eingetragen.
+          </div>
         ) : (
           <div className="adminlist">
             {(selectedDay ? dayEntries : monthEntries).map((entry) => {
               const key = `${entry.category.toLowerCase()}:${entry.id}`;
-              const isHighlighted =
-                highlighted === key ||
-                (entry.category === 'Training' &&
-                  highlighted === `training:${entry.id}`);
+              const isHighlighted = highlighted === key;
 
               return (
                 <article
@@ -336,11 +445,19 @@ export default function KalenderPage() {
                   id={`entry-${entry.id}`}
                   style={{
                     display: 'block',
-                    border: isHighlighted ? '2px solid currentColor' : undefined,
+                    border: isHighlighted
+                      ? '2px solid currentColor'
+                      : undefined,
                     scrollMarginTop: 20,
                   }}
                 >
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: 12,
+                      alignItems: 'flex-start',
+                    }}
+                  >
                     {entry.image_url && (
                       <img
                         src={entry.image_url}
@@ -362,11 +479,24 @@ export default function KalenderPage() {
                             ? 'Training'
                             : 'News-Termin'}
                       </span>
+
                       <h3 style={{ margin: '8px 0' }}>{entry.title}</h3>
-                      <p>{displayDate(entry.date)}</p>
+
+                      <p>
+                        {displayDate(
+                          entry.date,
+                          entry.category === 'News'
+                        )}
+                      </p>
 
                       {entry.location && (
-                        <p><MapPin size={14} style={{ display: 'inline' }} /> {entry.location}</p>
+                        <p>
+                          <MapPin
+                            size={14}
+                            style={{ display: 'inline' }}
+                          />{' '}
+                          {entry.location}
+                        </p>
                       )}
 
                       {entry.description && <p>{entry.description}</p>}
@@ -386,13 +516,18 @@ export default function KalenderPage() {
           gap: 5px;
           margin-top: 18px;
         }
+
         .calendar-weekday {
           text-align: center;
           color: var(--muted, #888);
           padding: 8px 0;
           font-size: 13px;
         }
-        .calendar-empty { min-height: 48px; }
+
+        .calendar-empty {
+          min-height: 48px;
+        }
+
         .calendar-day {
           min-height: 54px;
           border: 1px solid var(--border, #333);
@@ -406,28 +541,71 @@ export default function KalenderPage() {
           gap: 5px;
           cursor: pointer;
         }
+
         .calendar-day.selected {
           outline: 2px solid currentColor;
           outline-offset: -2px;
           font-weight: 700;
         }
-        .calendar-day.has-events { font-weight: 700; }
-        .calendar-dots { display: flex; gap: 3px; min-height: 5px; }
-        .calendar-dots i, .calendar-legend i {
-          width: 6px; height: 6px; border-radius: 50%; display: inline-block;
+
+        .calendar-day.has-events {
+          font-weight: 700;
         }
-        .training { background: #22c55e; }
-        .event { background: #f59e0b; }
-        .news { background: #60a5fa; }
+
+        .calendar-dots {
+          display: flex;
+          gap: 3px;
+          min-height: 5px;
+        }
+
+        .calendar-dots i,
+        .calendar-legend i {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          display: inline-block;
+        }
+
+        .training {
+          background: #22c55e;
+        }
+
+        .event {
+          background: #f59e0b;
+        }
+
+        .news {
+          background: #60a5fa;
+        }
+
         .calendar-legend {
-          display: flex; flex-wrap: wrap; gap: 14px;
-          margin-top: 18px; font-size: 12px;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 14px;
+          margin-top: 18px;
+          font-size: 12px;
         }
-        .calendar-legend span { display: flex; align-items: center; gap: 6px; }
+
+        .calendar-legend span {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
         @media (max-width: 480px) {
-          .calendar-grid { gap: 3px; }
-          .calendar-day { min-height: 44px; border-radius: 6px; font-size: 13px; }
-          .calendar-empty { min-height: 44px; }
+          .calendar-grid {
+            gap: 3px;
+          }
+
+          .calendar-day {
+            min-height: 44px;
+            border-radius: 6px;
+            font-size: 13px;
+          }
+
+          .calendar-empty {
+            min-height: 44px;
+          }
         }
       `}</style>
     </main>
