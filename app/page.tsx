@@ -321,12 +321,7 @@ export default function Home() {
                 </button>
               </>
             ) : (
-              <>
-                <Link href="/kalender">
-                  <CalendarDays size={16} /> Kalender
-                </Link>
-                <a href="#mitgliederzugang">Mitgliederzugang</a>
-              </>
+              <a href="#mitgliederzugang">Mitgliederzugang</a>
             )}
           </div>
         </nav>
@@ -392,13 +387,10 @@ export default function Home() {
 
           {!isApprovedMember && (
             <div className="actions">
-              <Link className="btn primary" href="/kalender">
-                <CalendarDays size={17} />
-                Kalender ansehen
-                <ArrowUpRight size={17} />
-              </Link>
-              <a className="btn" href="#mitgliederzugang">
+              <a className="btn primary" href="#mitgliederzugang">
+                <Users size={17} />
                 Mitgliederzugang
+                <ArrowUpRight size={17} />
               </a>
             </div>
           )}
