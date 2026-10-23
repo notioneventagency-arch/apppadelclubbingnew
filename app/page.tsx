@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase, supabaseReady } from '@/lib/supabase';
 import TrainingList from '@/components/training-list';
+import PushNotifications from '@/components/push-notifications';
 
 type Entry = {
   id: string;
@@ -670,6 +671,9 @@ export default function Home() {
                   </p>
                 </div>
               </div>
+
+              <PushNotifications />
+
               <TrainingList />
             </section>
 
