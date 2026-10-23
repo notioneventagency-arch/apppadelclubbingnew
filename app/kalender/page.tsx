@@ -438,8 +438,8 @@ export default function KalenderPage() {
   }
 
   return (
-    <main className="container section">
-      <nav className="nav">
+    <main className="container section calendar-page">
+      <nav className="nav calendar-nav">
         <Link className="brand" href="/">
           <img src="/padelclubbing-logo.jpg" alt="PADELCLUBBING" />
           <span>PADELCLUBBING</span>
@@ -451,7 +451,7 @@ export default function KalenderPage() {
         </div>
       </nav>
 
-      <header style={{ margin: '28px 0' }}>
+      <header className="calendar-header" style={{ margin: '28px 0' }}>
         <p className="eyebrow">Alle Vereinstermine auf einen Blick</p>
 
         <h1 style={{ fontSize: 'clamp(32px, 6vw, 48px)', margin: '8px 0' }}>
@@ -464,8 +464,8 @@ export default function KalenderPage() {
         </p>
       </header>
 
-      <section className="card" style={{ padding: 16 }}>
-        <div className="sectionhead">
+      <section className="card calendar-card" style={{ padding: 16 }}>
+        <div className="sectionhead calendar-toolbar">
           <button
             className="btn"
             type="button"
@@ -546,8 +546,8 @@ export default function KalenderPage() {
         </div>
       </section>
 
-      <section className="section">
-        <div className="sectionhead">
+      <section className="section calendar-details">
+        <div className="sectionhead details-toolbar">
           <div>
             <p className="eyebrow">
               {selectedDay ? 'Ausgewählter Tag' : 'Monatsübersicht'}
@@ -594,7 +594,7 @@ export default function KalenderPage() {
 
               return (
                 <article
-                  className="adminitem"
+                  className="adminitem calendar-entry"
                   key={`${entry.category}-${entry.id}`}
                   id={`entry-${entry.id}`}
                   style={{
@@ -606,6 +606,7 @@ export default function KalenderPage() {
                   }}
                 >
                   <div
+                    className="entry-layout"
                     style={{
                       display: 'flex',
                       gap: 12,
@@ -616,6 +617,7 @@ export default function KalenderPage() {
                       <img
                         src={entry.image_url}
                         alt=""
+                        className="entry-image"
                         style={{
                           width: 96,
                           height: 84,
@@ -625,7 +627,7 @@ export default function KalenderPage() {
                       />
                     )}
 
-                    <div style={{ flex: 1, minWidth: 0 }}>
+                    <div className="entry-content" style={{ flex: 1, minWidth: 0 }}>
                       <span className={`tag ${categoryClass(entry.category)}`}>
                         {entry.category === 'Event'
                           ? 'Turnier / Event'
@@ -744,6 +746,195 @@ export default function KalenderPage() {
           display: flex;
           align-items: center;
           gap: 6px;
+        }
+
+        .calendar-page {
+          width: 100%;
+          min-width: 0;
+          box-sizing: border-box;
+          overflow-wrap: anywhere;
+        }
+
+        .calendar-nav {
+          gap: 16px;
+          align-items: center;
+        }
+
+        .calendar-header h1 {
+          line-height: 1.08;
+          overflow-wrap: anywhere;
+        }
+
+        .calendar-card {
+          min-width: 0;
+          box-sizing: border-box;
+        }
+
+        .calendar-toolbar {
+          display: grid;
+          grid-template-columns: 44px minmax(0, 1fr) 44px;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .calendar-toolbar h2 {
+          text-align: center;
+          font-size: clamp(18px, 4vw, 26px);
+          overflow-wrap: anywhere;
+        }
+
+        .calendar-toolbar .btn {
+          min-width: 44px;
+          min-height: 44px;
+          justify-content: center;
+          padding: 8px;
+        }
+
+        .details-toolbar {
+          gap: 12px;
+          align-items: center;
+        }
+
+        .calendar-entry {
+          min-width: 0;
+          overflow: hidden;
+        }
+
+        .entry-layout {
+          min-width: 0;
+        }
+
+        .entry-image {
+          flex: 0 0 96px;
+          max-width: 96px;
+        }
+
+        .entry-content {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+
+        .entry-content h3 {
+          overflow-wrap: anywhere;
+        }
+
+        .calendar-grid {
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+        }
+
+        .calendar-day {
+          min-width: 0;
+          -webkit-tap-highlight-color: transparent;
+          touch-action: manipulation;
+        }
+
+        @media (max-width: 700px) {
+          .calendar-page {
+            padding-left: max(14px, env(safe-area-inset-left));
+            padding-right: max(14px, env(safe-area-inset-right));
+            padding-top: max(16px, env(safe-area-inset-top));
+          }
+
+          .calendar-nav {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .calendar-nav .navlinks {
+            width: 100%;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+          }
+
+          .calendar-header {
+            margin: 22px 0 !important;
+          }
+
+          .calendar-header p {
+            line-height: 1.5;
+          }
+
+          .calendar-card {
+            padding: 12px !important;
+            border-radius: 16px;
+          }
+
+          .calendar-grid {
+            gap: 3px;
+            margin-top: 12px;
+          }
+
+          .calendar-weekday {
+            padding: 6px 0;
+            font-size: 11px;
+          }
+
+          .calendar-day {
+            min-height: 46px;
+            padding: 4px 0;
+            border-radius: 7px;
+            font-size: 13px;
+          }
+
+          .calendar-empty {
+            min-height: 46px;
+          }
+
+          .calendar-legend {
+            gap: 9px 12px;
+            font-size: 11px;
+          }
+
+          .details-toolbar {
+            align-items: stretch;
+            flex-direction: column;
+          }
+
+          .details-toolbar > button {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .calendar-entry {
+            padding: 14px !important;
+          }
+        }
+
+        @media (max-width: 420px) {
+          .calendar-day {
+            min-height: 40px;
+            font-size: 12px;
+          }
+
+          .calendar-empty {
+            min-height: 40px;
+          }
+
+          .calendar-dots {
+            gap: 2px;
+          }
+
+          .calendar-dots i {
+            width: 5px;
+            height: 5px;
+          }
+
+          .entry-layout {
+            flex-direction: column;
+          }
+
+          .entry-image {
+            width: 100% !important;
+            max-width: none;
+            height: 160px !important;
+            flex-basis: auto;
+          }
+
+          .calendar-entry .tag {
+            max-width: 100%;
+            white-space: normal;
+          }
         }
 
         @media (max-width: 480px) {
