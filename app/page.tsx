@@ -291,17 +291,26 @@ export default function Home() {
               <span className="muted">Lade Mitgliederbereich …</span>
             ) : isApprovedMember ? (
               <>
+                <Link href="/kalender">
+                  <CalendarDays size={16} /> Kalender
+                </Link>
+
                 <a href="#training">
-                  <CalendarDays size={16} /> Events
+                  <Trophy size={16} /> Events
                 </a>
+
                 <a href="#training-anmeldung">Trainings</a>
+
                 <a href="#news">
                   <Newspaper size={16} /> News
                 </a>
+
                 <Link href="/angebote">
                   <Gift size={16} /> Member Benefits
                 </Link>
+
                 {isAdmin && <Link href="/admin">Adminbereich</Link>}
+
                 <button
                   className="btn"
                   onClick={handleLogout}
@@ -312,7 +321,12 @@ export default function Home() {
                 </button>
               </>
             ) : (
-              <a href="#mitgliederzugang">Mitgliederzugang</a>
+              <>
+                <Link href="/kalender">
+                  <CalendarDays size={16} /> Kalender
+                </Link>
+                <a href="#mitgliederzugang">Mitgliederzugang</a>
+              </>
             )}
           </div>
         </nav>
@@ -356,15 +370,36 @@ export default function Home() {
 
           {isApprovedMember && (
             <div className="actions">
-              <a className="btn primary" href="#training">
+              <Link className="btn primary" href="/kalender">
+                <CalendarDays size={17} />
+                Kalender öffnen
+                <ArrowUpRight size={17} />
+              </Link>
+
+              <a className="btn" href="#training">
                 Termine entdecken <ArrowUpRight size={17} />
               </a>
+
               <a className="btn" href="#training-anmeldung">
                 Trainingsanmeldung
               </a>
+
               <Link className="btn" href="/angebote">
                 <Gift size={17} /> Member Benefits
               </Link>
+            </div>
+          )}
+
+          {!isApprovedMember && (
+            <div className="actions">
+              <Link className="btn primary" href="/kalender">
+                <CalendarDays size={17} />
+                Kalender ansehen
+                <ArrowUpRight size={17} />
+              </Link>
+              <a className="btn" href="#mitgliederzugang">
+                Mitgliederzugang
+              </a>
             </div>
           )}
         </section>
@@ -401,6 +436,7 @@ export default function Home() {
                 </div>
 
                 <p className="eyebrow">PADELCLUBBING MEMBER AREA</p>
+
                 <h2>
                   {signedIn
                     ? 'Dein Zugang'
@@ -408,6 +444,7 @@ export default function Home() {
                       ? 'Willkommen zurück'
                       : 'Mitglied werden'}
                 </h2>
+
                 <p className="muted">
                   {signedIn
                     ? 'Deine Registrierung wird vom Verein geprüft.'
@@ -454,6 +491,7 @@ export default function Home() {
                     >
                       Benutzer-Login
                     </button>
+
                     <button
                       type="button"
                       className={
@@ -480,6 +518,7 @@ export default function Home() {
                         >
                           E-Mail-Adresse
                         </label>
+
                         <input
                           id="home-email"
                           type="email"
@@ -510,6 +549,7 @@ export default function Home() {
                         >
                           Passwort
                         </label>
+
                         <input
                           id="home-password"
                           type="password"
@@ -575,6 +615,7 @@ export default function Home() {
                         Angaben. Dein Zugang zu den geschützten Inhalten wird
                         erst nach der Freigabe aktiviert.
                       </p>
+
                       <Link
                         href="/mitglied-werden"
                         className="btn primary"
@@ -615,6 +656,12 @@ export default function Home() {
                     Die nächsten Vereinstermine an einem Ort.
                   </p>
                 </div>
+
+                <Link className="btn" href="/kalender">
+                  <CalendarDays size={17} />
+                  Alle Termine
+                  <ArrowUpRight size={17} />
+                </Link>
               </div>
 
               {events.length > 0 ? (
@@ -636,14 +683,18 @@ export default function Home() {
                           }}
                         />
                       )}
+
                       <span className="tag">
                         {event.category || 'Vereinstermin'}
                       </span>
+
                       <p className="date">{dateLabel(event.starts_at)}</p>
                       <h3>{event.title}</h3>
+
                       <p className="muted">
                         {event.description || 'Weitere Informationen folgen.'}
                       </p>
+
                       {event.location && (
                         <p className="small">📍 {event.location}</p>
                       )}
@@ -673,7 +724,6 @@ export default function Home() {
               </div>
 
               <PushNotifications />
-
               <TrainingList />
             </section>
 
@@ -704,8 +754,10 @@ export default function Home() {
                           }}
                         />
                       )}
+
                       <span className="tag">News</span>
                       <h3>{item.title}</h3>
+
                       <p className="muted">
                         {item.description || 'Weitere Informationen folgen.'}
                       </p>
@@ -777,6 +829,7 @@ export default function Home() {
                 >
                   Bisherige Website ↗
                 </a>
+
                 <a
                   className="btn"
                   href="https://www.instagram.com/padelclubbing/"
@@ -785,10 +838,8 @@ export default function Home() {
                 >
                   <Instagram size={17} /> Instagram
                 </a>
-                <a
-                  className="btn"
-                  href="mailto:thepadelclubbing@gmail.com"
-                >
+
+                <a className="btn" href="mailto:thepadelclubbing@gmail.com">
                   thepadelclubbing@gmail.com
                 </a>
               </div>
