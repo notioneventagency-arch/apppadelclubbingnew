@@ -11,8 +11,6 @@ import {
   LogOut,
   CalendarDays,
   Newspaper,
-  Menu,
-  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -47,57 +45,6 @@ function dateLabel(value: string | null) {
   });
 }
 
-function renderDescription(value: string | null) {
-  if (!value) return 'Weitere Informationen folgen.';
-
-  const urlPattern = /https?:\/\/[^\s<>"']+/gi;
-  const parts = value.split(urlPattern);
-  const urls = value.match(urlPattern) || [];
-  let urlIndex = 0;
-
-  return parts.flatMap((part, index) => {
-    const elements = [];
-
-    if (part) {
-      elements.push(
-        <span key={`text-${index}`}>{part}</span>,
-      );
-    }
-
-    if (index < urls.length) {
-      const rawUrl = urls[urlIndex++];
-      const trailingMatch = rawUrl.match(/[.,!?;:)]+$/);
-      const trailing = trailingMatch?.[0] || '';
-      const url = trailing
-        ? rawUrl.slice(0, -trailing.length)
-        : rawUrl;
-
-      if (url) {
-        elements.push(
-          <a
-            key={`link-${index}`}
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="news-link"
-            aria-label="Ticketseite in neuem Tab öffnen"
-          >
-            Tickets sichern <ArrowUpRight size={14} />
-          </a>,
-        );
-      }
-
-      if (trailing) {
-        elements.push(
-          <span key={`punctuation-${index}`}>{trailing}</span>,
-        );
-      }
-    }
-
-    return elements;
-  });
-}
-
 export default function Home() {
   const router = useRouter();
 
@@ -109,7 +56,6 @@ export default function Home() {
   const [events, setEvents] = useState<Entry[]>([]);
   const [news, setNews] = useState<Entry[]>([]);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [loginEmail, setLoginEmail] = useState('');
@@ -125,14 +71,12 @@ export default function Home() {
     setIsAdmin(false);
     setSignedIn(Boolean(userId));
 
-    const client = supabase;
-
-    if (!userId || !client) {
+    if (!userId || !supabase) {
       setLoading(false);
       return;
     }
 
-    const { data: profile, error: profileQueryError } = await client
+    const { data: profile, error: profileQueryError } = await supabase
       .from('profiles')
       .select('role,status')
       .eq('id', userId)
@@ -159,11 +103,12 @@ export default function Home() {
       return;
     }
 
-    setIsAdmin(memberProfile.role === 'admin');
+    const admin = memberProfile.role === 'admin';
+    setIsAdmin(admin);
     setIsApprovedMember(true);
 
     const [eventsResult, newsResult] = await Promise.all([
-      client
+      supabase
         .from('events')
         .select('*')
         .eq('published', true)
@@ -173,7 +118,7 @@ export default function Home() {
         })
         .limit(6),
 
-      client
+      supabase
         .from('news')
         .select('*')
         .eq('published', true)
@@ -203,9 +148,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const client = supabase;
-
-    if (!client || !supabaseReady) {
+    if (!supabase || !supabaseReady) {
       setLoading(false);
       return;
     }
@@ -213,7 +156,7 @@ export default function Home() {
     let active = true;
 
     async function checkCurrentUser() {
-      const { data, error } = await client.auth.getUser();
+      const { data, error } = await supabase!.auth.getUser();
 
       if (!active) return;
 
@@ -228,7 +171,7 @@ export default function Home() {
 
     const {
       data: { subscription },
-    } = client.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!active) return;
 
       const userId = session?.user?.id ?? null;
@@ -248,9 +191,7 @@ export default function Home() {
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    const client = supabase;
-
-    if (!client || !supabaseReady) {
+    if (!supabase || !supabaseReady) {
       setLoginMessage(
         'Die Verbindung zum Mitgliederportal ist momentan nicht verfügbar.',
       );
@@ -261,7 +202,7 @@ export default function Home() {
     setLoginMessage('');
 
     try {
-      const { data, error } = await client.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: loginEmail.trim(),
         password: loginPassword,
       });
@@ -275,7 +216,7 @@ export default function Home() {
 
       setLoading(true);
 
-      const { data: profile, error: profileQueryError } = await client
+      const { data: profile, error: profileQueryError } = await supabase
         .from('profiles')
         .select('role,status')
         .eq('id', data.user.id)
@@ -315,13 +256,11 @@ export default function Home() {
   }
 
   async function handleLogout() {
-    const client = supabase;
-    if (!client) return;
+    if (!supabase) return;
 
     setLoggingOut(true);
-    setMobileMenuOpen(false);
 
-    const { error } = await client.auth.signOut();
+    const { error } = await supabase.auth.signOut();
 
     if (error) {
       console.error('Abmeldung fehlgeschlagen:', error.message);
@@ -347,26 +286,7 @@ export default function Home() {
             <span>PADELCLUBBING</span>
           </Link>
 
-          <button
-            type="button"
-            className="mobile-menu-toggle"
-            aria-label={mobileMenuOpen ? 'Menü schließen' : 'Menü öffnen'}
-            aria-expanded={mobileMenuOpen}
-            aria-controls="main-navigation-links"
-            onClick={() => setMobileMenuOpen((open) => !open)}
-          >
-            {mobileMenuOpen ? <X size={23} /> : <Menu size={23} />}
-          </button>
-
-          <div
-            id="main-navigation-links"
-            className={`navlinks${mobileMenuOpen ? ' mobile-menu-open' : ''}`}
-            onClick={(event) => {
-              if ((event.target as HTMLElement).closest('a, button')) {
-                setMobileMenuOpen(false);
-              }
-            }}
-          >
+          <div className="navlinks">
             {loading ? (
               <span className="muted">Lade Mitgliederbereich …</span>
             ) : isApprovedMember ? (
@@ -583,7 +503,10 @@ export default function Home() {
                       <div style={{ marginBottom: 16 }}>
                         <label
                           htmlFor="home-email"
-                          style={{ display: 'block', marginBottom: 8 }}
+                          style={{
+                            display: 'block',
+                            marginBottom: 8,
+                          }}
                         >
                           E-Mail-Adresse
                         </label>
@@ -611,7 +534,10 @@ export default function Home() {
                       <div style={{ marginBottom: 18 }}>
                         <label
                           htmlFor="home-password"
-                          style={{ display: 'block', marginBottom: 8 }}
+                          style={{
+                            display: 'block',
+                            marginBottom: 8,
+                          }}
                         >
                           Passwort
                         </label>
@@ -663,7 +589,12 @@ export default function Home() {
                         {!loginBusy && <ArrowUpRight size={18} />}
                       </button>
 
-                      <p style={{ textAlign: 'center', marginTop: 18 }}>
+                      <p
+                        style={{
+                          textAlign: 'center',
+                          marginTop: 18,
+                        }}
+                      >
                         <Link href="/login" className="muted">
                           Passwort vergessen?
                         </Link>
@@ -799,7 +730,7 @@ export default function Home() {
               {news.length > 0 ? (
                 <div className="grid">
                   {news.map((item) => (
-                    <article className="card news-card" key={item.id}>
+                    <article className="card" key={item.id}>
                       {item.image_url && (
                         <img
                           src={item.image_url}
@@ -819,8 +750,8 @@ export default function Home() {
                       <span className="tag">News</span>
                       <h3>{item.title}</h3>
 
-                      <p className="muted news-description">
-                        {renderDescription(item.description)}
+                      <p className="muted">
+                        {item.description || 'Weitere Informationen folgen.'}
                       </p>
                     </article>
                   ))}
@@ -834,54 +765,48 @@ export default function Home() {
 
             <section id="verein" className="container section">
               <div className="grid">
-                <Link href="/kalender" className="card feature-card">
+                <article className="card">
                   <Users color="var(--cyan)" size={28} />
                   <h3>Verein &amp; Community</h3>
                   <p className="muted">
                     Gemeinsam besser werden, neue Leute kennenlernen und Padel
                     erleben.
                   </p>
-                  <span className="feature-link">
-                    Zum Vereinskalender <ArrowUpRight size={16} />
-                  </span>
-                </Link>
+                </article>
 
-                <Link href="/kalender" className="card feature-card">
+                <article className="card">
                   <Trophy color="var(--pink)" size={28} />
                   <h3>Turniere &amp; Meisterschaften</h3>
                   <p className="muted">
                     Spiele mit, sammle Erfahrung und vertrete unseren Verein.
                   </p>
-                  <span className="feature-link">
-                    Termine ansehen <ArrowUpRight size={16} />
-                  </span>
-                </Link>
+                </article>
 
-                <a
-                  href="https://www.instagram.com/padelclubbing/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="card feature-card"
-                >
+                <article className="card">
                   <Images color="#b78aff" size={28} />
                   <h3>Erinnerungen teilen</h3>
                   <p className="muted">
-                    Fotos und Highlights unserer Trainings und Events entdecken
-                    und mit der Community teilen.
+                    Fotos und Highlights unserer Trainings und Events an einem
+                    Ort.
                   </p>
-                  <span className="feature-link">
-                    Instagram öffnen <ArrowUpRight size={16} />
-                  </span>
-                </a>
+                </article>
 
-                <Link href="/angebote" className="card feature-card">
+                <Link
+                  href="/angebote"
+                  className="card"
+                  style={{
+                    display: 'block',
+                    color: 'inherit',
+                    textDecoration: 'none',
+                  }}
+                >
                   <Gift color="var(--cyan)" size={28} />
                   <h3>Member Benefits</h3>
                   <p className="muted">
                     Exklusive Angebote, Sponsorvorteile und Rabattcodes für
                     unsere Mitglieder.
                   </p>
-                  <span className="feature-link">
+                  <span className="btn">
                     Angebote entdecken <ArrowUpRight size={17} />
                   </span>
                 </Link>
@@ -925,298 +850,6 @@ export default function Home() {
           </p>
         </div>
       </footer>
-
-      <style jsx global>{`
-        .mobile-menu-toggle {
-          display: none;
-          align-items: center;
-          justify-content: center;
-          width: 44px;
-          height: 44px;
-          flex: 0 0 44px;
-          border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
-          border-radius: 13px;
-          color: inherit;
-          background: rgba(255, 255, 255, 0.04);
-          cursor: pointer;
-        }
-
-        .heroimg {
-          display: block;
-          width: 100%;
-          height: clamp(220px, 32vw, 350px);
-          object-fit: cover;
-          object-position: center;
-          border-radius: 22px;
-        }
-
-        .hero h1 {
-          font-size: clamp(2.65rem, 6vw, 4.5rem);
-          line-height: 1.02;
-          letter-spacing: -0.055em;
-          overflow-wrap: anywhere;
-        }
-
-        .hero .lead {
-          max-width: 720px;
-        }
-
-        .news-card {
-          min-width: 0;
-          overflow: hidden;
-        }
-
-        .news-description {
-          min-width: 0;
-          overflow-wrap: anywhere;
-          word-break: break-word;
-          line-height: 1.6;
-        }
-
-        .news-link {
-          display: inline-flex;
-          align-items: center;
-          gap: 5px;
-          max-width: 100%;
-          margin-top: 5px;
-          color: var(--cyan, #22d3ee);
-          text-decoration: underline;
-          text-underline-offset: 3px;
-          overflow-wrap: anywhere;
-          word-break: break-word;
-          cursor: pointer;
-        }
-
-        .news-link:hover {
-          color: var(--pink, #f472b6);
-        }
-
-        .news-link svg {
-          flex: 0 0 auto;
-        }
-
-        .feature-card {
-          display: block;
-          min-width: 0;
-          color: inherit;
-          text-decoration: none;
-          cursor: pointer;
-          transition:
-            transform 180ms ease,
-            border-color 180ms ease,
-            background 180ms ease;
-        }
-
-        .feature-card:hover {
-          transform: translateY(-3px);
-          border-color: var(--cyan, #22d3ee);
-        }
-
-        .feature-card:focus-visible {
-          outline: 2px solid var(--cyan, #22d3ee);
-          outline-offset: 4px;
-        }
-
-        .feature-link {
-          display: inline-flex;
-          align-items: center;
-          gap: 7px;
-          margin-top: 8px;
-          color: var(--cyan, #22d3ee);
-          font-size: 14px;
-          font-weight: 600;
-        }
-
-        .feature-link svg {
-          flex: 0 0 auto;
-        }
-
-        @media (max-width: 760px) {
-          header.container {
-            position: relative;
-            z-index: 30;
-          }
-
-          header .nav {
-            position: relative;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            min-height: 64px;
-          }
-
-          header .brand {
-            min-width: 0;
-            gap: 9px;
-          }
-
-          header .brand img {
-            width: 40px;
-            height: 40px;
-            object-fit: contain;
-            flex: 0 0 40px;
-          }
-
-          header .brand span {
-            font-size: clamp(0.82rem, 3.5vw, 1rem);
-            letter-spacing: 0.015em;
-            white-space: nowrap;
-          }
-
-          .mobile-menu-toggle {
-            display: inline-flex;
-          }
-
-          header .navlinks {
-            display: none;
-            position: absolute;
-            top: calc(100% + 8px);
-            left: 0;
-            right: 0;
-            flex-direction: column;
-            align-items: stretch;
-            gap: 5px;
-            padding: 12px;
-            border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
-            border-radius: 18px;
-            background: rgba(10, 8, 15, 0.98);
-            box-shadow: 0 18px 50px rgba(0, 0, 0, 0.48);
-            backdrop-filter: blur(18px);
-          }
-
-          header .navlinks.mobile-menu-open {
-            display: flex;
-          }
-
-          header .navlinks a,
-          header .navlinks button {
-            display: flex;
-            align-items: center;
-            justify-content: flex-start;
-            gap: 10px;
-            width: 100%;
-            min-height: 46px;
-            box-sizing: border-box;
-            padding: 11px 13px;
-            border-radius: 12px;
-            font-size: 0.96rem;
-            text-align: left;
-          }
-
-          header .navlinks button {
-            justify-content: center;
-          }
-
-          .hero {
-            padding-top: 12px;
-          }
-
-          .heroimg {
-            height: clamp(170px, 54vw, 260px);
-            border-radius: 17px;
-            object-position: center;
-          }
-
-          .hero .eyebrow {
-            margin-top: 18px;
-            font-size: 0.72rem;
-            letter-spacing: 0.14em;
-          }
-
-          .hero h1 {
-            margin-top: 12px;
-            font-size: clamp(2.45rem, 10.5vw, 4rem);
-            line-height: 0.99;
-            letter-spacing: -0.06em;
-          }
-
-          .hero .lead {
-            margin-top: 16px;
-            font-size: 1rem;
-            line-height: 1.6;
-          }
-
-          .actions {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
-            width: 100%;
-          }
-
-          .actions .btn {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 0;
-            min-height: 48px;
-            box-sizing: border-box;
-            padding: 11px 10px;
-            font-size: 0.88rem;
-            line-height: 1.25;
-            text-align: center;
-            white-space: normal;
-          }
-
-          .section {
-            padding-top: 42px;
-            padding-bottom: 22px;
-          }
-
-          .sectionhead {
-            align-items: flex-start;
-            gap: 14px;
-            flex-wrap: wrap;
-          }
-
-          .sectionhead h2 {
-            font-size: clamp(1.8rem, 7vw, 2.6rem);
-            line-height: 1.08;
-          }
-
-          .grid {
-            grid-template-columns: minmax(0, 1fr);
-            gap: 14px;
-          }
-
-          .card {
-            min-width: 0;
-            box-sizing: border-box;
-          }
-
-          .card img {
-            max-width: 100%;
-          }
-
-          input,
-          textarea,
-          select {
-            font-size: 16px;
-          }
-
-          .footer {
-            padding-bottom: calc(24px + env(safe-area-inset-bottom));
-          }
-
-          main {
-            padding-bottom: env(safe-area-inset-bottom);
-          }
-        }
-
-        @media (max-width: 390px) {
-          header .brand span {
-            font-size: 0.78rem;
-          }
-
-          .hero h1 {
-            font-size: clamp(2.2rem, 10vw, 2.8rem);
-          }
-
-          .actions {
-            grid-template-columns: minmax(0, 1fr);
-          }
-        }
-      `}</style>
     </>
   );
 }
