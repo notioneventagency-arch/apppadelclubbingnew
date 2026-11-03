@@ -1,3 +1,451 @@
+'use client';
+
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { supabase } from '@/lib/supabase';
+import { CalendarPlus, RefreshCw, Trash2, Users } from 'lucide-react';
+
+type Training = {
+  id: string;
+  title: string;
+  description: string;
+  location: string;
+  starts_at: string;
+  max_participants: number;
+  image_url: string | null;
+  published: boolean;
+};
+
+type Registration = {
+  id: string;
+  user_id: string;
+  status: 'registered' | 'waitlist' | 'cancelled';
+  created_at: string;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+};
+
+export default function TrainingManagement() {
+  const [trainings, setTrainings] = useState<Training[]>([]);
+  const [registrations, setRegistrations] = useState<Record<string, Registration[]>>({});
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [location, setLocation] = useState('Tapedesign Padelperformance Center Wildon');
+  const [startsAt, setStartsAt] = useState('');
+  const [maxParticipants, setMaxParticipants] = useState('8');
+  const [published, setPublished] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!supabase) {
+      setMessage('Die Verbindung zur Datenbank ist nicht verfügbar.');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('trainings')
+      .select('*')
+      .order('starts_at', { ascending: true });
+
+    if (error) {
+      setMessage('Trainings konnten nicht geladen werden: ' + error.message);
+      return;
+    }
+
+    const rows = (data || []) as Training[];
+    setTrainings(rows);
+
+    const next: Record<string, Registration[]> = {};
+
+    for (const training of rows) {
+      const { data: regs, error: regError } = await supabase
+        .from('training_registrations')
+        .select('id,user_id,status,created_at')
+        .eq('training_id', training.id)
+        .order('created_at', { ascending: true });
+
+      if (regError) {
+        setMessage(
+          'Anmeldungen konnten nicht geladen werden: ' + regError.message
+        );
+        continue;
+      }
+
+      const registrationsForTraining = (regs || []) as Registration[];
+      const userIds = [
+        ...new Set(registrationsForTraining.map((reg) => reg.user_id)),
+      ];
+
+      if (userIds.length === 0) {
+        next[training.id] = [];
+        continue;
+      }
+
+      const { data: profiles, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, first_name, last_name')
+        .in('id', userIds);
+
+      if (profileError) {
+        setMessage(
+          'Mitgliedernamen konnten nicht geladen werden: ' +
+            profileError.message
+        );
+        next[training.id] = registrationsForTraining;
+        continue;
+      }
+
+      const profileById = new Map(
+        (profiles || []).map((profile) => [profile.id, profile])
+      );
+
+      next[training.id] = registrationsForTraining.map((reg) => {
+        const profile = profileById.get(reg.user_id);
+
+        return {
+          ...reg,
+          first_name: profile?.first_name || '',
+          last_name: profile?.last_name || '',
+        };
+      });
+    }
+
+    setRegistrations(next);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function sendPush(
+    titleText: string,
+    bodyText: string,
+    url: string
+  ) {
+    if (!supabase) return 'Supabase ist nicht verfügbar.';
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError || !session?.access_token) {
+      return 'Push nicht gesendet: Admin-Sitzung nicht gefunden.';
+    }
+
+    try {
+      const response = await fetch('/api/push/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          title: titleText,
+          body: bodyText,
+          url,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        return (
+          'Training gespeichert, aber Push fehlgeschlagen: ' +
+          (result.error || 'Unbekannter Fehler')
+        );
+      }
+
+      return `Push versendet: ${result.sent ?? 0} erfolgreich, ${result.failed ?? 0} fehlgeschlagen.`;
+    } catch {
+      return 'Training gespeichert, aber Push-Versand nicht erreichbar.';
+    }
+  }
+
+  function getTrainingCalendarUrl(trainingId: string) {
+    return `/kalender?type=training&id=${encodeURIComponent(trainingId)}`;
+  }
+
+  function formatTrainingDate(value: string) {
+    return new Date(value).toLocaleString('de-AT', {
+      weekday: 'short',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    if (!supabase) {
+      setMessage('Die Verbindung zur Datenbank ist nicht verfügbar.');
+      return;
+    }
+
+    if (!startsAt) {
+      setMessage('Bitte Datum und Uhrzeit eintragen.');
+      return;
+    }
+
+    const participantLimit = Number(maxParticipants);
+
+    if (
+      !Number.isInteger(participantLimit) ||
+      participantLimit < 1 ||
+      participantLimit > 200
+    ) {
+      setMessage('Die Teilnehmerzahl muss zwischen 1 und 200 liegen.');
+      return;
+    }
+
+    setBusy(true);
+    setMessage('');
+
+    let imageUrl: string | null = null;
+
+    if (imageFile) {
+      const safeName = imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+      const path = `${Date.now()}-${safeName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('training-images')
+        .upload(path, imageFile, {
+          upsert: false,
+          contentType: imageFile.type,
+        });
+
+      if (uploadError) {
+        setBusy(false);
+        setMessage('Bild-Upload fehlgeschlagen: ' + uploadError.message);
+        return;
+      }
+
+      const { data } = supabase.storage
+        .from('training-images')
+        .getPublicUrl(path);
+
+      imageUrl = data.publicUrl;
+    }
+
+    const { data: insertedTraining, error } = await supabase
+      .from('trainings')
+      .insert({
+        title: title.trim(),
+        description: description.trim(),
+        location: location.trim(),
+        starts_at: new Date(startsAt).toISOString(),
+        max_participants: participantLimit,
+        image_url: imageUrl,
+        published,
+      })
+      .select('id,title,description,location,starts_at,published')
+      .single();
+
+    if (error || !insertedTraining) {
+      setBusy(false);
+      setMessage(
+        'Training konnte nicht gespeichert werden: ' +
+          (error?.message || 'Keine Daten zurückgegeben.')
+      );
+      return;
+    }
+
+    let pushMessage = '';
+
+    if (published) {
+      const formattedDate = formatTrainingDate(insertedTraining.starts_at);
+
+      pushMessage = await sendPush(
+        'Neues Training: ' + insertedTraining.title,
+        `${formattedDate} · ${insertedTraining.location}`,
+        getTrainingCalendarUrl(insertedTraining.id)
+      );
+    }
+
+    setTitle('');
+    setDescription('');
+    setStartsAt('');
+    setMaxParticipants('8');
+    setPublished(false);
+    setImageFile(null);
+
+    const fileInput = document.getElementById(
+      'training-image'
+    ) as HTMLInputElement | null;
+
+    if (fileInput) fileInput.value = '';
+
+    setBusy(false);
+
+    setMessage(
+      published
+        ? `Training veröffentlicht. ${pushMessage}`
+        : 'Training gespeichert. Es ist noch ein Entwurf.'
+    );
+
+    await load();
+  }
+
+  async function remove(id: string) {
+    if (
+      !supabase ||
+      !confirm(
+        'Training wirklich löschen? Die zugehörigen Anmeldungen werden ebenfalls gelöscht.'
+      )
+    ) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('trainings')
+      .delete()
+      .eq('id', id);
+
+    setMessage(
+      error
+        ? 'Löschen fehlgeschlagen: ' + error.message
+        : 'Training gelöscht.'
+    );
+
+    await load();
+  }
+
+  async function setPublishedState(
+    training: Training,
+    nextPublished: boolean
+  ) {
+    if (!supabase) return;
+
+    const { error } = await supabase
+      .from('trainings')
+      .update({ published: nextPublished })
+      .eq('id', training.id);
+
+    if (error) {
+      setMessage('Status konnte nicht geändert werden: ' + error.message);
+      return;
+    }
+
+    if (nextPublished && !training.published) {
+      const formattedDate = formatTrainingDate(training.starts_at);
+
+      const pushMessage = await sendPush(
+        'Neues Training: ' + training.title,
+        `${formattedDate} · ${training.location}`,
+        getTrainingCalendarUrl(training.id)
+      );
+
+      setMessage('Training veröffentlicht. ' + pushMessage);
+    } else {
+      setMessage(
+        nextPublished
+          ? 'Training ist bereits veröffentlicht.'
+          : 'Training als Entwurf gespeichert.'
+      );
+    }
+
+    await load();
+  }
+
+  return (
+    <section className="section" id="training-management">
+      <div className="sectionhead">
+        <div>
+          <p className="eyebrow">Trainingsverwaltung</p>
+          <h2>Trainings erstellen</h2>
+          <p className="muted">
+            Lege die konkreten Termine alle 14 Tage nach Bedarf an.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void load()}
+        >
+          <RefreshCw size={15} /> Aktualisieren
+        </button>
+      </div>
+
+      {message && (
+        <p className="success" role="status">
+          {message}
+        </p>
+      )}
+
+      <form className="form card" onSubmit={save}>
+        <div className="field">
+          <label htmlFor="training-title">Titel</label>
+          <input
+            id="training-title"
+            required
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="z. B. Padelclubbing Training"
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="training-description">Beschreibung</label>
+          <textarea
+            id="training-description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Niveau, Ablauf, Treffpunkt …"
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="training-location">Ort</label>
+          <input
+            id="training-location"
+            required
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="training-starts">Datum und Uhrzeit</label>
+          <input
+            id="training-starts"
+            required
+            type="datetime-local"
+            value={startsAt}
+            onChange={(e) => setStartsAt(e.target.value)}
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="training-capacity">
+            Maximale Teilnehmerzahl
+          </label>
+          <input
+            id="training-capacity"
+            required
+            type="number"
+            min="1"
+            max="200"
+            value={maxParticipants}
+            onChange={(e) => setMaxParticipants(e.target.value)}
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="training-image">Titelbild (optional)</label>
+          <input
+            id="training-image"
+            type="file"
+            accept="image/*"
+            onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+          />
+          <span className="small">
+            Bild wird im Supabase-Bucket „training-images“ gespeichert.
           </span>
         </div>
 
@@ -126,3 +574,10 @@
                   <Trash2 size={16} />
                 </button>
               </article>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
+}
